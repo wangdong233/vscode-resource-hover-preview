@@ -15,6 +15,10 @@
     var currentHovered = null;
     var hoverTimer = null;
     var hideTimer = null;
+    // v0.2-v0.5审查🟡：disposeActiveRenderer 按 type 路由（防 font/pdf/3d 资源累积）
+    var activeRendererType = null;
+    var activeFontFace = null;
+    var activePdf = null;
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（v0.4+ 升 /config 单源 type→mime，R-INT-02）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
@@ -130,7 +134,14 @@
         disposeContent(); popup.style.display = "none";
         var content = popup.querySelector(".mp-content"); if (content) content.replaceChildren();
     }
-    function disposeContent() { if (typeof dispose3D === "function") dispose3D(); }
+    function disposeContent() {
+        // v0.2-v0.5审查🟡：按 type 路由 dispose（防 FontFace/PDF worker/geometry 累积）
+        if (activeRendererType === "3d" && typeof dispose3D === "function") dispose3D();
+        else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
+        else if (activeRendererType === "pdf" && activePdf) { try { activePdf.destroy(); } catch (e) {} activePdf = null; }
+        activeRendererType = null;
+    }
+    function disposeActiveRenderer() { disposeContent(); }  // handleHover 前/切类型时调
 
     // ===== hover 监听（event delegation，doc06）=====
     function isExplorerActive() { var v = document.getElementById("workbench.view.explorer"); return !!v && v.offsetParent !== null; }
@@ -216,6 +227,7 @@
         var face = new FontFace("MpPreviewFont", buf);  // ArrayBuffer 源 → 不经 font-src
         await face.load();
         document.fonts.add(face);
+        activeFontFace = face; activeRendererType = "font";  // 登记 dispose（v0.2-v0.5审查🟡）
         var content = document.querySelector(".mp-content");
         var canvas = document.createElement("canvas");
         canvas.width = 480; canvas.height = 360;
@@ -256,6 +268,7 @@
         var resp = await fetch(SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=pdf&token=" + encodeURIComponent(TOKEN));
         var ab = await resp.arrayBuffer();
         var pdf = await lib.getDocument({ data: ab }).promise;
+        activePdf = pdf; activeRendererType = "pdf";  // 登记 dispose（v0.2-v0.5审查🟡）
         var page = await pdf.getPage(1);
         var content = document.querySelector(".mp-content");
         var canvas = document.createElement("canvas");
@@ -283,14 +296,25 @@
         var ab = await resp.arrayBuffer();
         var gltf = await new T.GLTFLoader().parseAsync(ab, "");
         scene.add(gltf.scene);
+        var disposables = [];
+        scene.traverse(function (o) {  // v0.2-v0.5审查🟡：makeDisposeGLTF 遍历收集（doc08 §5）
+            if (o.geometry) disposables.push(o.geometry);
+            if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
+                for (var k in m) { if (m[k] && m[k].isTexture) disposables.push(m[k]); }
+                disposables.push(m);
+            });
+        });
+        var cleanup = function () { disposables.forEach(function (d) { try { d.dispose(); } catch (e) {} }); };
         var rafId;
         (function animate() { rafId = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
-        threeReady = { renderer: renderer, controls: controls, rafId: rafId };
+        threeReady = { renderer: renderer, controls: controls, rafId: rafId, cleanup: cleanup };
+        activeRendererType = "3d";
     }
     function dispose3D() {
         if (!threeReady) return;
         cancelAnimationFrame(threeReady.rafId);
         threeReady.controls.dispose();
+        if (threeReady.cleanup) threeReady.cleanup();  // GLTF geometry/material/texture 遍历 dispose（v0.2-v0.5审查🟡）
         threeReady.renderer.dispose();
         threeReady.renderer.forceContextLoss();  // ★ 真正释放 WebGL context，否则 >16 context 必崩
         threeReady = null;
@@ -307,6 +331,7 @@
         var fn = popup.querySelector(".mp-fname"); fn.textContent = filename;
         popup.style.display = "flex";
         placePopup(rect);
+        disposeActiveRenderer();  // v0.2-v0.5审查🟡：渲染前清上一类型资源（防累积）
         // loading 占位
         var content = popup.querySelector(".mp-content"); content.replaceChildren();
         var loading = document.createElement("div"); loading.textContent = "loading…"; loading.style.color = "#888"; content.appendChild(loading);
