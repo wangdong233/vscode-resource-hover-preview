@@ -21,6 +21,7 @@
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
     var PDF_EXTS = ["pdf"];
+    var MODEL3D_EXTS = ["glb", "gltf", "obj", "stl", "fbx"];
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
@@ -29,6 +30,7 @@
         if (AUDIO_EXTS.indexOf(ext) >= 0) return "audio";
         if (FONT_EXTS.indexOf(ext) >= 0) return "font";
         if (PDF_EXTS.indexOf(ext) >= 0) return "pdf";
+        if (MODEL3D_EXTS.indexOf(ext) >= 0) return "3d";
         return null;
     }
 
@@ -127,7 +129,7 @@
         disposeContent(); popup.style.display = "none";
         var content = popup.querySelector(".mp-content"); if (content) content.replaceChildren();
     }
-    function disposeContent() { /* v0.2+ 各渲染器 dispose（3D rAF 等）；v0.1 图片无特殊资源 */ }
+    function disposeContent() { if (typeof dispose3D === "function") dispose3D(); }
 
     // ===== hover 监听（event delegation，doc06）=====
     function isExplorerActive() { var v = document.getElementById("workbench.view.explorer"); return !!v && v.offsetParent !== null; }
@@ -262,6 +264,37 @@
         content.replaceChildren(canvas);
     }
 
+    // v0.5 3D：three.js esbuild bundle（doc08 §5）。Spike7 真机验证前置（test-pending）。
+    var threeReady = null;
+    async function render3D(filePath) {
+        await loadLibBlob("three", "mp-three.bundle.js");
+        var T = window.MP_THREE;
+        var content = document.querySelector(".mp-content");
+        var canvas = document.createElement("canvas");
+        canvas.style.width = "100%"; canvas.style.height = "100%";
+        content.replaceChildren(canvas);
+        var scene = new T.Scene();
+        var camera = new T.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+        var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+        var controls = new T.OrbitControls(camera, canvas);
+        var resp = await fetch(SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=3d&token=" + encodeURIComponent(TOKEN));
+        var ab = await resp.arrayBuffer();
+        var gltf = await new T.GLTFLoader().parseAsync(ab, "");
+        scene.add(gltf.scene);
+        var rafId;
+        (function animate() { rafId = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+        threeReady = { renderer: renderer, controls: controls, rafId: rafId };
+    }
+    function dispose3D() {
+        if (!threeReady) return;
+        cancelAnimationFrame(threeReady.rafId);
+        threeReady.controls.dispose();
+        threeReady.renderer.dispose();
+        threeReady.renderer.forceContextLoss();  // ★ 真正释放 WebGL context，否则 >16 context 必崩
+        threeReady = null;
+    }
+
     function handleHover(rowEl, rect) {
         var filename = getLabelName(rowEl);
         if (!filename) return;
@@ -281,6 +314,7 @@
         else if (type === "audio") renderAudio(fullPath);
         else if (type === "font") renderFont(fullPath).catch(function (e) { showPopupError(e.message); });
         else if (type === "pdf") renderPdf(fullPath).catch(function (e) { showPopupError(e.message); });
+        else if (type === "3d") render3D(fullPath).catch(function (e) { showPopupError(e.message); });
     }
 
     // ===== 启动 =====

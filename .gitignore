@@ -8,6 +8,7 @@ __mp-patcher.lock
 *.mp.tmp
 .DS_Store
 .devteam/
+resources/lib/              # 构建产物（pdf.min.mjs/worker copy + three esbuild bundle），build:lib 生成
 
 # spike 脚本产物（开发期临时 patch VSCode，不入库运行痕迹）
 # spike2.mjs / spike6.mjs 等脚本本身可入库（开发工具），但运行时改的 VSCode 文件不入库

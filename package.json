@@ -8,9 +8,10 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:lib": "mkdir -p resources/lib && cp node_modules/pdfjs-dist/build/pdf.min.mjs resources/lib/ && cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs resources/lib/ && esbuild entry-three.js --bundle --format=iife --outfile=resources/lib/mp-three.bundle.js",
     "companion:build": "tsc -p companion/tsconfig.json",
     "companion:package": "cd companion && vsce package --no-dependencies",
-    "prepublishOnly": "npm run build && npm run companion:build && npm run companion:package",
+    "prepublishOnly": "npm run build && npm run build:lib && npm run companion:build && npm run companion:package",
     "patch": "tsx src/patcher.ts",
     "revert": "tsx src/patcher.ts --revert",
     "status": "tsx src/patcher.ts --status",
@@ -22,6 +23,7 @@
   "files": [
     "dist/",
     "resources/",
+    "resources/lib/",
     "hooks/",
     "companion/dist/",
     "companion/*.vsix",
@@ -32,7 +34,9 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.84.0",
     "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.28.1",
     "pdfjs-dist": "^6.2.108",
+    "three": "^0.185.1",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   },
