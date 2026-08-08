@@ -1,0 +1,31 @@
+{
+  "name": "resource-hover-preview-companion",
+  "displayName": "Resource Hover Preview",
+  "version": "0.1.0",
+  "publisher": "wangdong",
+  "description": "原生资源管理器悬停浮动预览（伴随扩展：触发 patch + 跑 EH server）",
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "resourceHoverPreview.patch", "title": "Resource Hover Preview: Patch Workbench" },
+      { "command": "resourceHoverPreview.revert", "title": "Resource Hover Preview: Revert" },
+      { "command": "resourceHoverPreview.status", "title": "Resource Hover Preview: Status" }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.84.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^3.2.0"
+  }
+}

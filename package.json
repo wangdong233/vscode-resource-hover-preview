@@ -1,0 +1,37 @@
+{
+  "name": "resource-hover-preview",
+  "version": "0.1.0",
+  "description": "VSCode 资源管理器悬停浮动预览（图片/视频/PDF/字体/音频/3D）",
+  "type": "module",
+  "bin": {
+    "resource-hover-preview": "dist/patcher.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "companion:build": "tsc -p companion/tsconfig.json",
+    "companion:package": "cd companion && vsce package --no-dependencies",
+    "patch": "tsx src/patcher.ts",
+    "revert": "tsx src/patcher.ts --revert",
+    "status": "tsx src/patcher.ts --status",
+    "test": "node hooks/test-patcher-io.mjs && node hooks/test-overlay-hash.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist/",
+    "resources/",
+    "hooks/",
+    "companion/dist/",
+    "*.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.84.0",
+    "typescript": "^5.4.0",
+    "tsx": "^4.7.0",
+    "@vscode/vsce": "^3.2.0"
+  },
+  "license": "MIT"
+}
