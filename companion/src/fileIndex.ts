@@ -1,3 +1,4 @@
+// v0.2-v0.5审查🔵：当前零引用（overlay 走 aria-label 方案0免索引）。保留作 v0.2+ remote/compressed fallback 骨架，接线前不 import。
 // 文件路径推导。详见 doc/06_DOM选择器容错策略.md。
 // Spike8 白盒确证（2026-08-08）：.monaco-icon-label 的 aria-label = labelService.getUriLabel(resource) = 完整绝对路径
 //   → overlay 直接读 aria-label（按首个 ' • ' 切分取前段）即得路径，**免整个 EH 文件索引**（方案0）。

@@ -203,10 +203,15 @@
         var content = document.querySelector(".mp-content");
         var video = document.createElement("video");
         video.src = SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=video&token=" + encodeURIComponent(TOKEN);
-        video.controls = true; video.autoplay = true; video.muted = true;  // muted+autoplay 配对（doc08）
+        video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
         video.addEventListener("error", function () { showPopupError("video 加载失败"); });
+        video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
+            var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "font-size:24px;padding:12px;cursor:pointer";
+            btn.addEventListener("click", function () { video.play(); btn.remove(); });
+            content.appendChild(btn);
+        });
     }
 
     // v0.3 音频：<audio> 直 HTTP src（复用 video/serveStream 路径，波形砍 [11 F2]）
@@ -287,10 +292,11 @@
         var canvas = document.createElement("canvas");
         canvas.style.width = "100%"; canvas.style.height = "100%";
         content.replaceChildren(canvas);
+        var cw = canvas.clientWidth || 400, ch = canvas.clientHeight || 300;  // v0.2-v0.5审查🔵：首帧 clientWidth=0 fallback
         var scene = new T.Scene();
-        var camera = new T.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+        var camera = new T.PerspectiveCamera(45, cw / ch, 0.1, 1000);
         var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
-        renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+        renderer.setSize(cw, ch, false);
         var controls = new T.OrbitControls(camera, canvas);
         var resp = await fetch(SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=3d&token=" + encodeURIComponent(TOKEN));
         var ab = await resp.arrayBuffer();
