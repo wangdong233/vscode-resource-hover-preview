@@ -3,6 +3,10 @@
   "displayName": "Resource Hover Preview",
   "version": "0.1.0",
   "publisher": "wangdong",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wangdong233/vscode-resource-hover-preview.git"
+  },
   "description": "原生资源管理器悬停浮动预览（伴随扩展：触发 patch + 跑 EH server）",
   "main": "./dist/extension.js",
   "engines": {

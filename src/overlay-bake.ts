@@ -1,28 +1,27 @@
-// overlay.js + mp-config.js 编译/打包。详见 doc/01 overlay.js 编译/打包。
-// 复用 cc-status-dot buildIIFE bake 范式（适配为文件级：注入 <script src> 而非 splice 进 extension.js）。
-import fs from "node:fs";
+// overlay.js + mp-config.js 编译。详见 doc/01 overlay.js 编译/打包 + doc/parse/pares1.md#1.3。
+// 分工（pares1 决策）：mp-overlay.js 内容固定 per version（patcher bake，不含 port/token）；
+//   mp-config.js 运行时配置（companion bake，每次 activate port/token 变）。overlay 读 window.__MP_CONFIG__。
+// 复用 cc-status-dot buildIIFE bake 范式（banner hash 迭代）。
 import { createHash } from "node:crypto";
 
-const OVERLAY_TEMPLATE_PATH = "resources/overlay.template.js"; // 相对项目根（运行时 cwd）
-
 export interface OverlayConfig {
-    port: number;       // server actualPort（递增后烘焙实际值）
-    token: string;      // 会话 token（crypto.randomBytes(32)）
-    version: string;    // INJECT_VERSION
+    port: number;
+    token: string;
+    version: string;
 }
 
-// bake mp-overlay.js：模板占位符替换 → 返回 {js, hash}
-// ⚠️ port/token/version 单源真相（只在 patcher 定义），bake 进字节（同 cc-status-dot cfgLiteral）。
-export function buildOverlayJs(config: OverlayConfig): { js: string; hash: string } {
-    let js = fs.readFileSync(OVERLAY_TEMPLATE_PATH, "utf8");
-    js = js.replace("__MP_CONFIG__", JSON.stringify(config)); // 烘焙配置（config 也可单独 mp-config.js，见 buildConfigJs）
-    // banner 替换：先算 hash（基于已替换内容的 sha256 前 8），再填 banner
-    const hash = createHash("sha256").update(js).digest("hex").slice(0, 8);
-    js = js.replace("/*mp-overlay:__VERSION__:__HASH__*/", `/*mp-overlay:${config.version}:${hash}*/`);
+// bake mp-overlay.js：banner 替换（version + content-hash），不碰 __MP_CONFIG__（运行时由 mp-config.js 注入）。
+// templateJs 顶部 banner `/*mp-overlay:__VERSION__:__HASH__*/`。
+export function buildOverlayJs(templateJs: string, version: string): { js: string; hash: string } {
+    let js = templateJs;
+    // hash 基于 banner 占位未替换的内容（banner 本身不含语义，算 hash 时先去掉占位避免循环）
+    const stripped = js.replace("/*mp-overlay:__VERSION__:__HASH__*/", "");
+    const hash = createHash("sha256").update(stripped).digest("hex").slice(0, 8);
+    js = js.replace("/*mp-overlay:__VERSION__:__HASH__*/", `/*mp-overlay:${version}:${hash}*/`);
     return { js, hash };
 }
 
-// bake mp-config.js（静态外链，烘焙 port/token）。
+// bake mp-config.js（companion 用，每次 activate 写 workbench 目录）。
 // 纯 window 属性赋值（非 inline script、非 TT sink），script-src 'self' 放行 + TT 不管（spike6 实证）。
 export function buildConfigJs(config: OverlayConfig): string {
     return `/*mp-config:baked*/\nwindow.__MP_CONFIG__ = ${JSON.stringify(config)};\n`;
