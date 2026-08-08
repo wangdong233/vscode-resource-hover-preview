@@ -6,6 +6,7 @@
 ;(function () {
     "use strict";
     var cfg = window.__MP_CONFIG__ || {};
+    if (!cfg.port || !cfg.token) { console.warn("[mp-overlay] config missing（mp-config.js 未加载/port/token 缺失），abort"); return; }  // v1.0审查🔵：降等保护
     var SERVER_BASE = "http://127.0.0.1:" + cfg.port;
     var TOKEN = cfg.token;
     var HOVER_DELAY = 300, HIDE_DELAY = 200;
