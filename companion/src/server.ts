@@ -58,6 +58,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
         return;
     }
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
+    if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
     res.writeHead(404); res.end("not found");
 }
 
@@ -100,6 +101,16 @@ function serveStream(file: string, type: string, req: http.IncomingMessage, res:
         res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes" });
         fs.createReadStream(file).pipe(res);
     }
+}
+
+// v0.4 /lib/:name —— lazy 库（pdf.min.mjs/three bundle，从 INSTALL_DIR/resources/lib/）。正则净化文件名（防穿越）
+function serveLib(url: URL, res: http.ServerResponse) {
+    const name = url.pathname.slice("/lib/".length);
+    if (!/^[\w.\-]+$/.test(name)) { res.writeHead(400); res.end("invalid lib name"); return; }
+    const libPath = path.join(__dirname, "..", "resources", "lib", name);
+    if (!fs.existsSync(libPath) || !fs.statSync(libPath).isFile()) { res.writeHead(404); res.end("lib not found"); return; }
+    res.writeHead(200, { "Content-Type": name.endsWith(".mjs") ? "text/javascript" : "application/octet-stream" });
+    fs.createReadStream(libPath).pipe(res);
 }
 
 // 图片：异步读 + base64（v0.1 原图；大图缩放推迟）

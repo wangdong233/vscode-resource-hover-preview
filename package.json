@@ -31,9 +31,10 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.84.0",
-    "typescript": "^5.4.0",
+    "@vscode/vsce": "^3.2.0",
+    "pdfjs-dist": "^6.2.108",
     "tsx": "^4.7.0",
-    "@vscode/vsce": "^3.2.0"
+    "typescript": "^5.4.0"
   },
   "license": "MIT"
 }

@@ -20,6 +20,7 @@
     var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
+    var PDF_EXTS = ["pdf"];
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
@@ -27,6 +28,7 @@
         if (VIDEO_EXTS.indexOf(ext) >= 0) return "video";
         if (AUDIO_EXTS.indexOf(ext) >= 0) return "audio";
         if (FONT_EXTS.indexOf(ext) >= 0) return "font";
+        if (PDF_EXTS.indexOf(ext) >= 0) return "pdf";
         return null;
     }
 
@@ -224,6 +226,42 @@
         content.replaceChildren(canvas);
     }
 
+    // v0.4 PDF：pdf.js v6 ESM blob 加载（doc08 §4+§6）。Spike7 真机验证前置（test-pending）。
+    var _libCache = {};
+    async function loadLibBlob(name, libPath) {
+        if (_libCache[name]) return _libCache[name];
+        var resp = await fetch(SERVER_BASE + "/lib/" + libPath + "?token=" + encodeURIComponent(TOKEN));
+        if (!resp.ok) throw new Error("load " + name + " failed: " + resp.status);
+        var code = await resp.text();
+        var blobUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+        var mod = await import(blobUrl);  // blob 同源 + script-src blob: 允许
+        URL.revokeObjectURL(blobUrl);
+        _libCache[name] = mod;
+        return mod;
+    }
+    async function ensurePdfjs() {
+        if (_libCache.pdfjs) return _libCache.pdfjs;
+        var wresp = await fetch(SERVER_BASE + "/lib/pdf.worker.min.mjs?token=" + encodeURIComponent(TOKEN));
+        var wcode = await wresp.text();
+        var workerUrl = URL.createObjectURL(new Blob([wcode], { type: "text/javascript" }));  // blob worker（不 revoke）
+        var pdfjsLib = await loadLibBlob("pdfjs", "pdf.min.mjs");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+        return pdfjsLib;
+    }
+    async function renderPdf(filePath) {
+        var lib = await ensurePdfjs();
+        var resp = await fetch(SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=pdf&token=" + encodeURIComponent(TOKEN));
+        var ab = await resp.arrayBuffer();
+        var pdf = await lib.getDocument({ data: ab }).promise;
+        var page = await pdf.getPage(1);
+        var content = document.querySelector(".mp-content");
+        var canvas = document.createElement("canvas");
+        var viewport = page.getViewport({ scale: 1.0 });
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise;
+        content.replaceChildren(canvas);
+    }
+
     function handleHover(rowEl, rect) {
         var filename = getLabelName(rowEl);
         if (!filename) return;
@@ -242,6 +280,7 @@
         else if (type === "video") renderVideo(fullPath);
         else if (type === "audio") renderAudio(fullPath);
         else if (type === "font") renderFont(fullPath).catch(function (e) { showPopupError(e.message); });
+        else if (type === "pdf") renderPdf(fullPath).catch(function (e) { showPopupError(e.message); });
     }
 
     // ===== 启动 =====
