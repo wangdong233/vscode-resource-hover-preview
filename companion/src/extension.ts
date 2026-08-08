@@ -15,8 +15,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 1. token 固定 from INSTALL_DIR/mp-token.json（patcher installRuntimeFiles 首次生成）
     const token = readTokenFromInstallDir();
-    // 2. 起 server（绑 127.0.0.1，用固定 token；port 17741 固定）
-    const { server, port } = startPreviewServer(token);
+    // 2. workspace roots（path containment，v0.1审查🔴修）
+    const roots = (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
+    // 3. 起 server（绑 127.0.0.1，用固定 token + roots containment；port 17741 固定）
+    const { server, port } = startPreviewServer(token, roots);
     context.subscriptions.push({ dispose: () => server.close() });
     output.appendLine(`[mp] server 127.0.0.1:${port} token=${token ? "ok" : "MISSING(请 npx resource-hover-preview 安装)"}`);
 

@@ -22,9 +22,9 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }
 
-export function startPreviewServer(token: string): PreviewServer {
+export function startPreviewServer(token: string, roots: string[] = []): PreviewServer {
     const port = findPort(BASE_PORT);
-    const server = http.createServer((req, res) => handle(req, res, token));
+    const server = http.createServer((req, res) => handle(req, res, token, roots));
     server.on("error", (e: NodeJS.ErrnoException) => {  // v0.1审查🟡修：防 EADDRINUSE 崩 EH
         if (e.code === "EADDRINUSE") console.error(`[mp] port ${port} occupied`);
         else throw e;
@@ -38,7 +38,7 @@ function findPort(base: number, max = base + 20): number {
     return base;
 }
 
-function handle(req: http.IncomingMessage, res: http.ServerResponse, token: string) {
+function handle(req: http.IncomingMessage, res: http.ServerResponse, token: string, roots: string[]) {
     // 闸门1：Host header（防 DNS rebinding）
     const host = req.headers.host || "";
     if (!ALLOWED_HOST.test(host)) { res.writeHead(403); res.end("forbidden host"); return; }
@@ -57,21 +57,28 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
         res.end(JSON.stringify({ port: BASE_PORT, version: "v0.1.0", maxFileSize: MAX_FILE_SIZE, types: TYPE_TABLE }));
         return;
     }
-    if (url.pathname === "/preview") return servePreview(url, req, res);
+    if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     res.writeHead(404); res.end("not found");
 }
 
-function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerResponse) {
+function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
     const file = url.searchParams.get("file");
     const type = url.searchParams.get("type");
     if (!file || !type) { res.writeHead(400); res.end("missing file or type"); return; }
     const resolved = path.resolve(file);
-    if (!fs.existsSync(resolved)) { res.writeHead(404); res.end("not found"); return; }
-    const stat = fs.statSync(resolved);
+    // 闸门4 containment（v0.1审查🔴修）：realpath 防符号链接逃逸 + workspace 归属校验
+    let realPath: string;
+    try { realPath = fs.realpathSync(resolved); } catch { res.writeHead(404); res.end("not found"); return; }
+    if (roots.length > 0) {
+        const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
+        if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) {
+            res.writeHead(403); res.end("outside workspace"); return;
+        }
+    }
+    const stat = fs.statSync(realPath);
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
-    // TODO: isWithin(workspaceRoots) + fs.realpathSync 防符号链接（doc04 三层防御）
-    if (type === "image") return serveImage(resolved, res);
-    if (type === "video" || type === "audio" || type === "pdf" || type === "3d") return serveStream(resolved, type, req, res);
+    if (type === "image") return serveImage(realPath, res);
+    if (type === "video" || type === "audio" || type === "pdf" || type === "3d") return serveStream(realPath, type, req, res);
     res.writeHead(400); res.end("unsupported type");
 }
 
