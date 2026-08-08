@@ -15,7 +15,7 @@
     "patch": "tsx src/patcher.ts",
     "revert": "tsx src/patcher.ts --revert",
     "status": "tsx src/patcher.ts --status",
-    "test": "node hooks/test-overlay-hash.mjs"
+    "test": "node hooks/test-overlay-hash.mjs && node hooks/test-contract-sync.mjs"
   },
   "engines": {
     "node": ">=18"
