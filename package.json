@@ -10,6 +10,7 @@
     "build": "tsc",
     "companion:build": "tsc -p companion/tsconfig.json",
     "companion:package": "cd companion && vsce package --no-dependencies",
+    "prepublishOnly": "npm run build && npm run companion:build && npm run companion:package",
     "patch": "tsx src/patcher.ts",
     "revert": "tsx src/patcher.ts --revert",
     "status": "tsx src/patcher.ts --status",
@@ -23,6 +24,7 @@
     "resources/",
     "hooks/",
     "companion/dist/",
+    "companion/*.vsix",
     "*.md",
     "LICENSE"
   ],

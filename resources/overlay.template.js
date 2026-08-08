@@ -15,12 +15,15 @@
     var hoverTimer = null;
     var hideTimer = null;
 
-    // v0.1 图片类型（v0.2+ 升 /config 单源 type→mime，R-INT-02）
+    // v0.1 图片 + v0.2 视频（v0.3+ 升 /config 单源 type→mime，R-INT-02）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
+    var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
-        return IMAGE_EXTS.indexOf(ext) >= 0 ? "image" : null;
+        if (IMAGE_EXTS.indexOf(ext) >= 0) return "image";
+        if (VIDEO_EXTS.indexOf(ext) >= 0) return "video";
+        return null;
     }
 
     // ===== popup 骨架（createElement，doc03）=====
@@ -175,6 +178,17 @@
             });
     }
 
+    // v0.2 视频：直 HTTP src（浏览器原生 Range seek，非 blob；doc08 §1）
+    function renderVideo(filePath) {
+        var content = document.querySelector(".mp-content");
+        var video = document.createElement("video");
+        video.src = SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=video&token=" + encodeURIComponent(TOKEN);
+        video.controls = true; video.autoplay = true; video.muted = true;  // muted+autoplay 配对（doc08）
+        video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
+        content.replaceChildren(video);
+        video.addEventListener("error", function () { showPopupError("video 加载失败"); });
+    }
+
     function handleHover(rowEl, rect) {
         var filename = getLabelName(rowEl);
         if (!filename) return;
@@ -189,7 +203,8 @@
         // loading 占位
         var content = popup.querySelector(".mp-content"); content.replaceChildren();
         var loading = document.createElement("div"); loading.textContent = "loading…"; loading.style.color = "#888"; content.appendChild(loading);
-        renderImage(fullPath).catch(function (e) { showPopupError(e.message); });
+        if (type === "image") renderImage(fullPath).catch(function (e) { showPopupError(e.message); });
+        else if (type === "video") renderVideo(fullPath);
     }
 
     // ===== 启动 =====

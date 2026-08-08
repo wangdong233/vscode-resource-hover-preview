@@ -91,9 +91,8 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
         try { fs.accessSync(workbenchHtmlPath, fs.constants.W_OK); }
         catch { console.error(`[mp] 无写权限: ${workbenchHtmlPath}。请: sudo chown -R $(whoami) '<appRoot>'`); return "failed"; }
 
+        const ver = JSON.parse(fs.readFileSync(productJsonPath, "utf8")).version;  // hoist 到 try 外（catch 要用，v0.1审查🔴修）
         try {
-            const product = JSON.parse(fs.readFileSync(productJsonPath, "utf8"));
-            const ver = product.version;
             backupIfAbsent(workbenchHtmlPath, `${workbenchHtmlPath}.mp.bak.${ver}`);
             backupIfAbsent(productJsonPath, `${productJsonPath}.mp.bak.${ver}`);
 
@@ -119,8 +118,8 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
             if (product2.checksums[wbKey] !== recomputeChecksum(workbenchHtmlPath)) throw new Error("checksum mismatch");
             return "patched";
         } catch (e) {
-            rollbackFromBak(`${workbenchHtmlPath}.mp.bak`, workbenchHtmlPath);
-            rollbackFromBak(`${productJsonPath}.mp.bak`, productJsonPath);
+            rollbackFromBak(`${workbenchHtmlPath}.mp.bak.${ver}`, workbenchHtmlPath);  // 版本化名（v0.1审查🔴修：与 backup 一致）
+            rollbackFromBak(`${productJsonPath}.mp.bak.${ver}`, productJsonPath);
             console.error(`[mp] patch failed: ${(e as Error).message}`);
             return "failed";
         }
@@ -132,8 +131,8 @@ function runRevert(installs: Install[]): void {
     for (const inst of installs) {
         const { workbenchHtmlPath, productJsonPath, outDir } = inst;
         try {
-            rollbackFromBak(`${workbenchHtmlPath}.mp.bak`, workbenchHtmlPath);
-            rollbackFromBak(`${productJsonPath}.mp.bak`, productJsonPath);
+            rollbackVersionedBak(workbenchHtmlPath);  // glob .mp.bak.* 还原（v0.1审查🔴修：revert 版本化名）
+            rollbackVersionedBak(productJsonPath);
             const overlayDest = path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js");
             if (fs.existsSync(overlayDest)) fs.rmSync(overlayDest);
             const cfgDest = path.join(path.dirname(workbenchHtmlPath), "mp-config.js");
@@ -171,6 +170,15 @@ async function main() {
 // ===== helpers =====
 // readOrGenToken：固定 token（INSTALL_DIR/mp-token.json）。首次生成，后续读同值。
 // 固定原因：workbench renderer 加载早于 companion activate，token 必须跨 activate 稳定才不失配。
+// rollbackVersionedBak：glob 目录下 <basename>.mp.bak.* 取最新还原（不依赖 version 字符串，v0.1审查🔴修）
+function rollbackVersionedBak(targetPath: string): void {
+    const dir = path.dirname(targetPath);
+    const base = path.basename(targetPath);
+    try {
+        const baks = fs.readdirSync(dir).filter(f => f.startsWith(base + ".mp.bak.")).sort();
+        if (baks.length) fs.copyFileSync(path.join(dir, baks[baks.length - 1]), targetPath);
+    } catch { /* 无 bak 静默（首次 revert 无备份） */ }
+}
 function readOrGenToken(installDir: string): string {
     const tokenPath = path.join(installDir, "mp-token.json");
     try { if (fs.existsSync(tokenPath)) return JSON.parse(fs.readFileSync(tokenPath, "utf8")).token; } catch { /* fall through gen */ }
