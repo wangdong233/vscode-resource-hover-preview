@@ -14,7 +14,8 @@ import { writeAtomicSync, atomicCopyFileSync, backupIfAbsent, rollbackFromBak } 
 import { patchCsp, injectScriptTag } from "./csp.js";
 import { discoverVscodeInstalls, type Install } from "./discover.js";
 import { withLock } from "./lock.js";
-import { buildOverlayJs } from "./overlay-bake.js";
+import { buildOverlayJs, buildConfigJs } from "./overlay-bake.js";  // buildConfigJs：统一 mp-config bake（消除双 bake，v0.1审查🟡）
+import { cmpVerStr } from "./semver.js";  // v0.1审查🟡：locateInstallDir semver 排序（消除死代码）
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)); // dist/（npx）或 INSTALL_DIR（--patch-only）
 const COMPANION_ID = "wangdong.resource-hover-preview-companion"; // publisher.name
@@ -41,7 +42,7 @@ function locateInstallDir(): string | null {
     // 版本前缀匹配 wangdong.resource-hover-preview-companion-*
     const match = fs.readdirSync(extRoot)
         .filter(d => d.startsWith(COMPANION_ID + "-"))
-        .sort()
+        .sort((a, b) => cmpVerStr(a.slice(COMPANION_ID.length + 1), b.slice(COMPANION_ID.length + 1)))  // semver 正确排序（v0.1审查🟡：字典序会让 0.10.0<0.2.0）
         .pop();
     return match ? path.join(extRoot, match) : null;
 }
@@ -65,7 +66,7 @@ function installRuntimeFiles(): void {
 function installCompanion(): void {
     const vsix = findVsix();
     if (!vsix) { console.error("[mp] 未找到 .vsix，请先 npm run companion:package"); return; }
-    const codeBin = (process.env.PATH?.split(":").some(p => fs.existsSync(path.join(p, "code")))) ? "code" : "/usr/local/bin/code";
+    const codeBin = (process.env.PATH?.split(path.delimiter).some(p => fs.existsSync(path.join(p, "code")))) ? "code" : "/usr/local/bin/code";  // v0.1审查🟡：Win 分隔符 ';'
     console.log(`[mp] code --install-extension ${vsix}`);
     const r = spawnSync(codeBin, ["--install-extension", vsix], { stdio: "inherit" });
     console.log(`[mp] install-extension exit ${r.status}`);
@@ -84,9 +85,15 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
         if (installDir4cfg) {
             const fixedToken = readOrGenToken(installDir4cfg);
             writeAtomicSync(path.join(path.dirname(workbenchHtmlPath), "mp-config.js"),
-                `/*mp-config*/\nwindow.__MP_CONFIG__ = ${JSON.stringify({ port: 17741, token: fixedToken, version: INJECT_VERSION })};\n`);
+                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION }));  // 统一 buildConfigJs（v0.1审查🟡：消除内联双 bake）
         }
-        if (state === "fresh") return "fresh";  // workbench 已 patched，仅 mp-config 重 bake（token 固定，内容稳定）
+        if (state === "fresh") {
+            // v0.1审查🔵：fresh 也校验 mp-overlay.js 存在（被删则补拷，否则 script 404 静默死）
+            const overlayDest = path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js");
+            const overlaySrc = findBakedOverlay(install);
+            if (overlaySrc && !fs.existsSync(overlayDest)) atomicCopyFileSync(overlaySrc, overlayDest);
+            return "fresh";
+        }
 
         try { fs.accessSync(workbenchHtmlPath, fs.constants.W_OK); }
         catch { console.error(`[mp] 无写权限: ${workbenchHtmlPath}。请: sudo chown -R $(whoami) '<appRoot>'`); return "failed"; }

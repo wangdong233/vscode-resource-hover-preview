@@ -8,7 +8,7 @@ const TOKEN = " http://127.0.0.1:*"; // 通配端口（server 递增 17741→177
 // surgical patch：connect-src/img-src/media-src 各追加 token（media-src 再加 blob:）
 export function patchCsp(html: string): string {
     const match = html.match(CSP_META_RE);
-    if (!match) return html; // 无 CSP meta → 路径 B（清空 http-equiv）TODO
+    if (!match) { console.warn("[mp] CSP meta 未匹配（可能 single-quote 包裹或结构变），CSP 未 patch——fetch 可能被拦"); return html; }
     let csp = match[4];
     csp = injectCspDirective(csp, "connect-src", TOKEN); // overlay fetch EH server（v0.1 功能最小集）
     csp = injectCspDirective(csp, "img-src", TOKEN);     // 前向兼容（v0.1 img-src 已含 data:，stream/blob 场景）
