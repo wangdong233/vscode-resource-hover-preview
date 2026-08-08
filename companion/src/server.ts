@@ -78,14 +78,14 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     const stat = fs.statSync(realPath);
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
     if (type === "image") return serveImage(realPath, res);
-    if (type === "video" || type === "audio" || type === "pdf" || type === "3d") return serveStream(realPath, type, req, res);
+    if (type === "video" || type === "audio" || type === "pdf" || type === "3d" || type === "font") return serveStream(realPath, type, req, res);
     res.writeHead(400); res.end("unsupported type");
 }
 
 // range stream（video/audio/pdf/3d，原生 Range seek，doc04 硬化）
 function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse) {
     const stat = fs.statSync(file);
-    const mimeMap: Record<string, string> = { video: "video/mp4", audio: "audio/mpeg", pdf: "application/pdf", "3d": "model/gltf-binary" };
+    const mimeMap: Record<string, string> = { video: "video/mp4", audio: "audio/mpeg", pdf: "application/pdf", "3d": "model/gltf-binary", font: "font/ttf" };
     const mime = mimeMap[type] || "application/octet-stream";
     const range = req.headers.range;
     if (range) {

@@ -15,14 +15,18 @@
     var hoverTimer = null;
     var hideTimer = null;
 
-    // v0.1 图片 + v0.2 视频（v0.3+ 升 /config 单源 type→mime，R-INT-02）
+    // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（v0.4+ 升 /config 单源 type→mime，R-INT-02）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
     var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
+    var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
+    var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
         if (IMAGE_EXTS.indexOf(ext) >= 0) return "image";
         if (VIDEO_EXTS.indexOf(ext) >= 0) return "video";
+        if (AUDIO_EXTS.indexOf(ext) >= 0) return "audio";
+        if (FONT_EXTS.indexOf(ext) >= 0) return "font";
         return null;
     }
 
@@ -189,6 +193,37 @@
         video.addEventListener("error", function () { showPopupError("video 加载失败"); });
     }
 
+    // v0.3 音频：<audio> 直 HTTP src（复用 video/serveStream 路径，波形砍 [11 F2]）
+    function renderAudio(filePath) {
+        var content = document.querySelector(".mp-content");
+        var audio = document.createElement("audio");
+        audio.src = SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=audio&token=" + encodeURIComponent(TOKEN);
+        audio.controls = true; audio.style.width = "100%";
+        content.replaceChildren(audio);
+        audio.addEventListener("error", function () { showPopupError("audio 加载失败"); });
+    }
+
+    // v0.3 字体：FontFace ArrayBuffer 源（免 font-src CSP）+ canvas glyph grid（doc08 §3）
+    async function renderFont(filePath) {
+        var resp = await fetch(SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=font&token=" + encodeURIComponent(TOKEN));
+        if (!resp.ok) throw new Error("font server " + resp.status);
+        var buf = await resp.arrayBuffer();
+        var face = new FontFace("MpPreviewFont", buf);  // ArrayBuffer 源 → 不经 font-src
+        await face.load();
+        document.fonts.add(face);
+        var content = document.querySelector(".mp-content");
+        var canvas = document.createElement("canvas");
+        canvas.width = 480; canvas.height = 360;
+        var ctx = canvas.getContext("2d");
+        var samples = [{ size: 48, text: "The quick brown fox" }, { size: 24, text: "ABCDEFGabcdefg 0123456789" }, { size: 14, text: "!@#$%^&*()_+-=" }];
+        var y = 0;
+        for (var i = 0; i < samples.length; i++) {
+            ctx.font = samples[i].size + "px MpPreviewFont";
+            ctx.fillText(samples[i].text, 20, y += samples[i].size + 8);
+        }
+        content.replaceChildren(canvas);
+    }
+
     function handleHover(rowEl, rect) {
         var filename = getLabelName(rowEl);
         if (!filename) return;
@@ -205,6 +240,8 @@
         var loading = document.createElement("div"); loading.textContent = "loading…"; loading.style.color = "#888"; content.appendChild(loading);
         if (type === "image") renderImage(fullPath).catch(function (e) { showPopupError(e.message); });
         else if (type === "video") renderVideo(fullPath);
+        else if (type === "audio") renderAudio(fullPath);
+        else if (type === "font") renderFont(fullPath).catch(function (e) { showPopupError(e.message); });
     }
 
     // ===== 启动 =====
