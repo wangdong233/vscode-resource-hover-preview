@@ -1,7 +1,7 @@
 {
   "name": "vscode-resource-hover-preview-companion",
   "displayName": "Resource Hover Preview",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "publisher": "wangdong",
   "repository": {
     "type": "git",
@@ -29,7 +29,17 @@
         "command": "resourceHoverPreview.status",
         "title": "Resource Hover Preview: Status"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Resource Hover Preview",
+      "properties": {
+        "resource-hover-preview.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用资源管理器悬停浮动预览。设为 false 关闭（需 Cmd+Q 完全重启生效，mp-config.js 走磁盘缓存）。"
+        }
+      }
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

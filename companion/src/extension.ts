@@ -25,6 +25,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // 3. spawn patcher --patch-only（patcher 读 INSTALL_DIR token + port 17741 bake mp-config；不传 env）
     setImmediate(() => runPatcher(output));
 
+    // 审查 2.4：enabled 配置变更 → 重新 bake mp-config（需 Cmd+Q 生效，因 mp-config.js 走磁盘缓存）
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration("resource-hover-preview.enabled")) setImmediate(() => runPatcher(output));
+    }));
+
     context.subscriptions.push(
         vscode.commands.registerCommand("resourceHoverPreview.patch", () => runPatcher(output)),
         vscode.commands.registerCommand("resourceHoverPreview.revert", () => spawnPatcher(["--revert"], output)),
@@ -45,8 +50,10 @@ function runPatcher(output: vscode.OutputChannel) {
         vscode.window.showWarningMessage(`Resource Hover Preview: patcher not found at ${PATCH_JS}. Re-run \`npx vscode-resource-hover-preview\`.`);
         return;
     }
+    // 审查 2.4：读 workspace enabled 配置 → 传 patcher bake 进 mp-config（=== false 时 overlay 自禁）
+    const enabled = vscode.workspace.getConfiguration("resource-hover-preview").get<boolean>("enabled", true);
     const child = cp.spawn(findNodeBin(), [PATCH_JS, "--patch-only"], {
-        stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", MP_ENABLED: String(enabled) },
     });
     const out: string[] = [], err: string[] = [];
     child.stdout?.on("data", d => out.push(d.toString()));
@@ -57,7 +64,7 @@ function runPatcher(output: vscode.OutputChannel) {
         const msg = out.join("").trim();
         output.appendLine(msg);
         if (err.length) output.appendLine("[stderr] " + err.join("").trim());
-        if (msg.includes("VSCode: patched")) {  // 精确匹配状态行（v0.1 真机 bug4 修：includes("patched") 误匹配"若 patched"提示文字）
+        if (msg.includes("[mp-result] patched=true")) {  // 结构化 marker（审查 3.4：固定串，不再 flavor 耦合 "VSCode: patched"）
             vscode.window.showInformationMessage("Resource Hover Preview: 已 patch。请 Cmd+Q 完全退出重启 VSCode（Reload Window 不生效）。");
         }
     });

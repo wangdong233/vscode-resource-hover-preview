@@ -7,12 +7,14 @@
     "use strict";
     var cfg = window.__MP_CONFIG__ || {};
     if (!cfg.port || !cfg.token) { console.warn("[mp-overlay] config missing（mp-config.js 未加载/port/token 缺失），abort"); return; }  // v1.0审查🔵：降等保护
+    if (cfg.enabled === false) { console.log("[mp-overlay] disabled（resource-hover-preview.enabled=false）"); return; }  // 运行时开关(2.4)：=== false 避免未定义误关
     var SERVER_BASE = "http://127.0.0.1:" + cfg.port;
     var TOKEN = cfg.token;
     var HOVER_DELAY = 300, HIDE_DELAY = 200;
     var SIZE_KEY = "mp.popupSize";
     var isPinned = false;
     var currentHovered = null;
+    var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var hoverTimer = null;
     var hideTimer = null;
     // v0.2-v0.5审查🟡：disposeActiveRenderer 按 type 路由（防 font/pdf/3d 资源累积）
@@ -26,7 +28,7 @@
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
     var PDF_EXTS = ["pdf"];
-    var MODEL3D_EXTS = ["glb", "gltf", "obj", "stl", "fbx"];
+    var MODEL3D_EXTS = ["glb", "gltf"];  // 仅 glb/gltf（GLTFLoader 支持）；obj/stl/fbx 需对应 Loader，entry-three 未含 → 诚实砍（审查 2.2，防晦涩 GLTF 解析错）
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
@@ -136,7 +138,7 @@
         });
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.textContent = isPinned ? "📌(固定)" : "📌"; });
         resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
-        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; hidePopup(); });
+        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 清 currentHovered/lastRenderedItem（审查 3.1：closeBtn 是唯一不清者，致 re-hover 同项不触发）
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
         popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); });  // 在 popup 上 → 取消关闭
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
@@ -154,6 +156,7 @@
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         disposeContent(); popup.style.display = "none";
         var content = popup.querySelector(".mp-content"); if (content) content.replaceChildren();
+        lastRenderedItem = null;  // 清已渲染项（审查 3.1）
     }
     function disposeContent() {
         // v0.2-v0.5审查🟡：按 type 路由 dispose（防 FontFace/PDF worker/geometry 累积）
@@ -360,12 +363,18 @@
     }
 
     function handleHover(rowEl, rect) {
+        if (isPinned) return;  // pin 锁定当前内容，忽略新 hover（审查 3.2）
         var filename = getLabelName(rowEl);
         if (!filename) return;
         var type = detectMediaType(filename);
         if (!type) return; // 非媒体
         var fullPath = getFullPath(rowEl);
         if (!fullPath) return; // 路径取不到（remote 等 fallback 待 v0.2+）
+        if (rowEl === lastRenderedItem) {  // 同项已渲染且仍可见 → 不重复 fetch（审查 3.1：防 hideTimer 清 currentHovered 后 re-hover 闪烁）
+            var existing = document.getElementById("mp-popup");
+            if (existing && existing.style.display !== "none") return;
+        }
+        lastRenderedItem = rowEl;
         var popup = ensurePopup();
         var fn = popup.querySelector(".mp-fname"); fn.textContent = filename;
         popup.style.display = "flex";

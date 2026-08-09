@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";  // 审查 2.6：spawn 未用，删（noUnusedLocals 闸门）
 import { randomBytes } from "node:crypto";
 import { INJECT_VERSION, readWorkbenchState, clearExistingPatches } from "./patcher-state.js";
 import { recomputeChecksum, patchProductChecksums, deriveChecksumKey } from "./checksum.js";
@@ -21,7 +21,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url)); // dist/（npx）或 
 const COMPANION_ID = "wangdong.vscode-resource-hover-preview-companion"; // publisher.name
 
 // ===== mp-overlay.js 定位（install 时 bake 到 INSTALL_DIR；--patch-only 从 INSTALL_DIR 复制）=====
-function findBakedOverlay(install: Install): string | null {
+function findBakedOverlay(): string | null {
     const installDir = locateInstallDir();
     if (!installDir) return null;
     const p = path.join(installDir, "mp-overlay.js");
@@ -37,6 +37,7 @@ function findOverlayTemplate(): string | null {
 
 // ===== INSTALL_DIR = companion 扩展安装目录 =====
 function locateInstallDir(): string | null {
+    if (process.env.MP_TEST_INSTALL_DIR) return process.env.MP_TEST_INSTALL_DIR;  // 测试 seam（test-patcher-io）
     const extRoot = path.join(os.homedir(), ".vscode", "extensions");
     if (!fs.existsSync(extRoot)) return null;
     // 版本前缀匹配 wangdong.vscode-resource-hover-preview-companion-*
@@ -59,6 +60,18 @@ function installRuntimeFiles(): void {
     readOrGenToken(installDir);  // 首次生成固定 token（INSTALL_DIR/mp-token.json），server + mp-config 共用
     // 复制 patcher.js + dist/*.js（ESM 模块）→ INSTALL_DIR（companion spawn 用）
     copyDirFiles(HERE, installDir, ".js");
+    // 审查 2.1 serveLib：resources/lib（pdf.min.mjs/worker + three bundle）须随 INSTALL_DIR，
+    //   否则 server.ts serveLib path.join(__dirname,"..","resources","lib") = INSTALL_DIR/resources/lib 404 → PDF/3D 全断。
+    //   copyDirFiles 单层仅 .js 漏 .mjs → 递归复制 lib 全件（vsix 打包 + npx 双通道）。
+    const libSrc = path.join(HERE, "..", "resources", "lib");
+    if (fs.existsSync(libSrc)) {
+        const libDest = path.join(installDir, "resources", "lib");
+        fs.mkdirSync(libDest, { recursive: true });
+        for (const f of fs.readdirSync(libSrc)) {
+            const sp = path.join(libSrc, f);
+            if (fs.statSync(sp).isFile()) atomicCopyFileSync(sp, path.join(libDest, f));
+        }
+    }
     console.log(`[mp] installRuntimeFiles → ${installDir}（mp-overlay.js hash=${hash}）`);
 }
 
@@ -85,12 +98,12 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
         if (installDir4cfg) {
             const fixedToken = readOrGenToken(installDir4cfg);
             writeAtomicSync(path.join(path.dirname(workbenchHtmlPath), "mp-config.js"),
-                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION }));  // 统一 buildConfigJs（v0.1审查🟡：消除内联双 bake）
+                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));  // 统一 buildConfigJs（v0.1审查🟡：消除内联双 bake）+ enabled 开关（审查 2.4，companion 传 env）
         }
         if (state === "fresh") {
             // v0.1审查🔵：fresh 也校验 mp-overlay.js 存在（被删则补拷，否则 script 404 静默死）
             const overlayDest = path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js");
-            const overlaySrc = findBakedOverlay(install);
+            const overlaySrc = findBakedOverlay();
             if (overlaySrc && !fs.existsSync(overlayDest)) atomicCopyFileSync(overlaySrc, overlayDest);
             return "fresh";
         }
@@ -104,7 +117,7 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
             backupIfAbsent(productJsonPath, `${productJsonPath}.mp.bak.${ver}`);
 
             // overlay.js（baked）：--patch-only 从 INSTALL_DIR；默认从 installRuntimeFiles 产物
-            const overlaySrc = findBakedOverlay(install);
+            const overlaySrc = findBakedOverlay();
             if (!overlaySrc) { console.error("[mp] mp-overlay.js 未找到（先 installRuntimeFiles）"); return "failed"; }
             const overlayJs = fs.readFileSync(overlaySrc, "utf8");
             const overlayHash = overlayJs.match(/mp-overlay:v[\d.]+:([0-9a-f]+)/)?.[1] ?? "00000000";
@@ -136,7 +149,7 @@ async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "
 // ===== --revert =====
 function runRevert(installs: Install[]): void {
     for (const inst of installs) {
-        const { workbenchHtmlPath, productJsonPath, outDir } = inst;
+        const { workbenchHtmlPath, productJsonPath } = inst;  // 仅用此二者（审查 2.6 noUnusedLocals）
         try {
             rollbackVersionedBak(workbenchHtmlPath);  // glob .mp.bak.* 还原（v0.1审查🔴修：revert 版本化名）
             rollbackVersionedBak(productJsonPath);
@@ -163,15 +176,17 @@ async function main() {
     }
     if (cmd === "--revert") { runRevert(installs); return; }
     if (cmd === "--patch-only") {
-        for (const inst of installs) console.log(`[mp] ${inst.flavor}: ${await detectAndPatch(inst)}`);
+        const states = await Promise.all(installs.map(inst => detectAndPatch(inst).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
         console.log("[mp] --patch-only done. 若 patched 请 Cmd+Q 完全退出重启（Reload Window 不生效）");
+        console.log(`[mp-result] patched=${states.includes("patched")}`);  // 结构化 marker（审查 3.4：extension 匹配固定串，不再 flavor 耦合 "VSCode: patched"）
         return;
     }
     // 默认 --patch（npx）：install companion → installRuntimeFiles（要 INSTALL_DIR）→ patch
     installCompanion();
     installRuntimeFiles();
-    for (const inst of installs) console.log(`[mp] ${inst.flavor}: ${await detectAndPatch(inst)}`);
+    const states = await Promise.all(installs.map(inst => detectAndPatch(inst).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
     console.log("[mp] done. 请 Cmd+Q 完全退出重启 VSCode（Reload Window 用缓存不重读 workbench.html，patch 不生效）");
+    console.log(`[mp-result] patched=${states.includes("patched")}`);
 }
 
 // ===== helpers =====

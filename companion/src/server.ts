@@ -1,7 +1,6 @@
 // EH localhost HTTP server。详见 doc/04_EH与Renderer通信协议.md（安全硬化真相源）。
 // 六道闸门（每请求按序）：OPTIONS → Host → Origin → CORS ACAO → 会话 token → 路径 containment。
 import * as http from "http";
-import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -18,7 +17,7 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     audio: { exts: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"], mime: "audio/mpeg" },
     font: { exts: ["ttf", "otf", "woff", "woff2"], mime: "font/*" },
     pdf: { exts: ["pdf"], mime: "application/pdf" },
-    "3d": { exts: ["glb", "gltf", "obj", "stl", "fbx"], mime: "model/gltf-binary" },
+    "3d": { exts: ["glb", "gltf"], mime: "model/gltf-binary" },  // 仅 glb/gltf（GLTFLoader 支持，审查 2.2）
 };
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }
@@ -34,8 +33,9 @@ export function startPreviewServer(token: string, roots: string[] = []): Preview
     return { server, port, token };
 }
 
-function findPort(base: number, max = base + 20): number {
-    // TODO: net 试 listen EADDRINUSE 递增（v0.1 简化用 base，冲突时编码者补）
+function findPort(base: number): number {
+    // port 固定 17741（与 patcher bake mp-config 契约锁定，overlay fetch 该端口；不可漂移）。
+    // 冲突时由 server.on("error") EADDRINUSE 报错，用户手改 BASE_PORT（双源同步 test-contract-sync 闸门）。
     return base;
 }
 
@@ -53,11 +53,8 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     // 闸门3：token（除 /ping）。空 token deny-all（v0.1审查🟡修：token='' 时 ''!=='' 为 false 会放行）
     if (!token || url.searchParams.get("token") !== token) { res.writeHead(403); res.end("forbidden token"); return; }
 
-    if (url.pathname === "/config") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ port: BASE_PORT, version: "v0.1.0", maxFileSize: MAX_FILE_SIZE, types: TYPE_TABLE }));
-        return;
-    }
+    // 审查 3.3：/config 端点已删（overlay 用硬编码 EXTS + detectMediaType，从不 fetch /config；
+    //   version/mime/types 字段运行时全死）。TYPE_TABLE 保留（serveStream/serveImage 消费 + test-contract-sync 闸门）。
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
     res.writeHead(404); res.end("not found");

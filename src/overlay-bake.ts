@@ -8,6 +8,7 @@ export interface OverlayConfig {
     port: number;
     token: string;
     version: string;
+    enabled?: boolean;  // 运行时开关（审查 2.4）：=== false 时 overlay IIFE 直接 return
 }
 
 // bake mp-overlay.js：banner 替换（version + content-hash），不碰 __MP_CONFIG__（运行时由 mp-config.js 注入）。
@@ -23,6 +24,9 @@ export function buildOverlayJs(templateJs: string, version: string): { js: strin
 
 // bake mp-config.js（companion 用，每次 activate 写 workbench 目录）。
 // 纯 window 属性赋值（非 inline script、非 TT sink），script-src 'self' 放行 + TT 不管（spike6 实证）。
+// enabled 仅在 === false 时写入（默认不写 → overlay 视为 true，避免老 mp-config 误关，审查 2.4）。
 export function buildConfigJs(config: OverlayConfig): string {
-    return `/*mp-config:baked*/\nwindow.__MP_CONFIG__ = ${JSON.stringify(config)};\n`;
+    const safe = { ...config };
+    if (safe.enabled === undefined) delete safe.enabled;
+    return `/*mp-config:baked*/\nwindow.__MP_CONFIG__ = ${JSON.stringify(safe)};\n`;
 }

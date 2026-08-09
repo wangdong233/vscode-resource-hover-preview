@@ -21,6 +21,13 @@ const WORKBENCH_CANDIDATES = [
 ];
 
 export function discoverVscodeInstalls(): Install[] {
+    // 测试 seam（test-patcher-io）：MP_TEST_APPDIR 指向 /tmp 仿 app 目录，跳过真实 VSCode 扫描
+    if (process.env.MP_TEST_APPDIR) {
+        const appDir = process.env.MP_TEST_APPDIR;
+        const productJsonPath = path.join(appDir, "product.json");
+        const workbenchHtmlPath = path.join(appDir, "out", "vs", "code", "electron-browser", "workbench", "workbench.html");
+        return [{ appDir, workbenchHtmlPath, productJsonPath, outDir: path.join(appDir, "out"), flavor: "test" }];
+    }
     const found: Install[] = [];
     for (const appDir of candidateAppDirs()) {
         const productJsonPath = path.join(appDir, "product.json");
