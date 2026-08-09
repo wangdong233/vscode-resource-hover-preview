@@ -57,7 +57,7 @@ function runPatcher(output: vscode.OutputChannel) {
         const msg = out.join("").trim();
         output.appendLine(msg);
         if (err.length) output.appendLine("[stderr] " + err.join("").trim());
-        if (msg.includes("patched")) {
+        if (msg.includes("VSCode: patched")) {  // 精确匹配状态行（v0.1 真机 bug4 修：includes("patched") 误匹配"若 patched"提示文字）
             vscode.window.showInformationMessage("Resource Hover Preview: 已 patch。请 Cmd+Q 完全退出重启 VSCode（Reload Window 不生效）。");
         }
     });

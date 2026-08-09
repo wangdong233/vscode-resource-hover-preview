@@ -148,7 +148,7 @@
     function setupHoverListeners() {
         var root = document.querySelector(".explorer-viewlet") || document.querySelector(".explorer-folders-view") || document.querySelector(".part.sidebar");
         if (!root) return;
-        root.addEventListener("mouseover", function (e) {
+        root.addEventListener("mouseover", function (e) {  // capture phase（true）：VSCode HoverController 在 a.label-name 上 stopPropagation 拦冒泡，capture 先于它捕获
             if (!isExplorerActive()) return;
             var item = e.target.closest(".monaco-list-row[role='treeitem']") || e.target.closest("[role='treeitem']");
             if (!item || item === currentHovered) return;
@@ -156,7 +156,7 @@
             if (hoverTimer) clearTimeout(hoverTimer);
             var rect = item.getBoundingClientRect();
             hoverTimer = setTimeout(function () { if (currentHovered === item) handleHover(item, rect); }, HOVER_DELAY);
-        });
+        }, true);
         root.addEventListener("mouseout", function (e) {
             var item = e.target.closest("[role='treeitem']");
             if (item === currentHovered) {
@@ -164,7 +164,7 @@
                 if (hideTimer) clearTimeout(hideTimer);
                 hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned) hidePopup(); }, HIDE_DELAY);
             }
-        });
+        }, true);
     }
     function isMouseInPopup() { var p = document.getElementById("mp-popup"); return p && p.matches(":hover"); }
 
