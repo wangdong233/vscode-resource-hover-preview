@@ -17,7 +17,7 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     audio: { exts: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"], mime: "audio/mpeg" },
     font: { exts: ["ttf", "otf", "woff", "woff2"], mime: "font/*" },
     pdf: { exts: ["pdf"], mime: "application/pdf" },
-    "3d": { exts: ["glb", "gltf"], mime: "model/gltf-binary" },  // 仅 glb/gltf（GLTFLoader 支持，审查 2.2）
+    "3d": { exts: ["glb", "gltf", "stl", "obj", "fbx"], mime: "model/gltf-binary" },  // 0.4.3：恢复 stl/obj/fbx
 };
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }

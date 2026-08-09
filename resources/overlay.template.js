@@ -34,7 +34,7 @@
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
     var PDF_EXTS = ["pdf"];
-    var MODEL3D_EXTS = ["glb", "gltf"];  // 仅 glb/gltf（GLTFLoader 支持）；obj/stl/fbx 需对应 Loader，entry-three 未含 → 诚实砍（审查 2.2，防晦涩 GLTF 解析错）
+    var MODEL3D_EXTS = ["glb", "gltf", "stl", "obj", "fbx"];  // 0.4.3：恢复 stl/obj/fbx（entry-three 加 STLLoader/OBJLoader/FBXLoader，render3D 按格式分发）
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
@@ -410,9 +410,34 @@
         var T = window.MP_THREE;
         var url = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));
         if (ep !== renderEpoch) return;
-        var ab = await fetch(url).arrayBuffer();
+        var ext = (filePath.split(".").pop() || "").toLowerCase();
+        // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
+        var object;
+        if (ext === "glb" || ext === "gltf") {
+            var ab = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            var gltf = await new T.GLTFLoader().parseAsync(ab, ""); if (ep !== renderEpoch) return;
+            object = gltf.scene;
+        } else if (ext === "stl") {
+            var abS = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            var geo = new T.STLLoader().parse(abS); if (ep !== renderEpoch) return;
+            if (!geo.attributes.normal) geo.computeVertexNormals();  // STL 无法线则算（MeshStandardMaterial 需法线着色）
+            object = new T.Mesh(geo, new T.MeshStandardMaterial({ color: 0x88aacc, metalness: 0.1, roughness: 0.75 }));
+        } else if (ext === "obj") {
+            var text = await fetch(url).text(); if (ep !== renderEpoch) return;  // OBJ 是 ASCII 文本格式（非 arrayBuffer）
+            object = new T.OBJLoader().parse(text); if (ep !== renderEpoch) return;
+        } else if (ext === "fbx") {
+            var abF = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            object = new T.FBXLoader().parse(abF, ""); if (ep !== renderEpoch) return;
+        } else { if (ep === renderEpoch) showPopupError("不支持的 3D 格式：" + ext); return; }
         if (ep !== renderEpoch) return;
-        var gltf = await new T.GLTFLoader().parseAsync(ab, "");  // 复审：parseAsync 纯 CPU 解析，提到 WebGLRenderer 之前——await 窗口零 GPU context，stale 时连 renderer 都未创建
+        // 归一化：stl/obj/fbx 原始几何常不在原点/尺寸悬殊 → 居中 + 缩放到 ~3 单位，相机 z=5 看全
+        var box = new T.Box3().setFromObject(object);
+        var center = box.getCenter(new T.Vector3());
+        var size = box.getSize(new T.Vector3());
+        var maxDim = Math.max(size.x, size.y, size.z, 0.001);
+        var scl = 3 / maxDim;
+        object.position.copy(center).multiplyScalar(-scl);  // p = -scl*center → 缩放后 box 中心落原点
+        object.scale.setScalar(scl);
         if (ep !== renderEpoch) return;
         var content = document.querySelector(".mp-content");
         var canvas = document.createElement("canvas");
@@ -420,13 +445,17 @@
         content.replaceChildren(canvas);
         var cw = canvas.clientWidth || 400, ch = canvas.clientHeight || 300;  // v0.2-v0.5审查🔵：首帧 clientWidth=0 fallback
         var scene = new T.Scene();
+        scene.add(new T.HemisphereLight(0xffffff, 0x444444, 1.2));  // 光照（stl 默认材质 + glb/fbx 标准 PBR 材质需光）
+        var dir = new T.DirectionalLight(0xffffff, 1.0); dir.position.set(2, 3, 2); scene.add(dir);
         var camera = new T.PerspectiveCamera(45, cw / ch, 0.1, 1000);
+        camera.position.set(0, 0, 5);
         var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
         renderer.setSize(cw, ch, false);
         var controls = new T.OrbitControls(camera, canvas);
-        scene.add(gltf.scene);
+        controls.target.set(0, 0, 0);
+        scene.add(object);
         var disposables = [];
-        scene.traverse(function (o) {  // v0.2-v0.5审查🟡：makeDisposeGLTF 遍历收集（doc08 §5）
+        scene.traverse(function (o) {  // 遍历收集 geometry/material/texture 防 GPU 泄漏（glb/stl/obj/fbx 通用）
             if (o.geometry) disposables.push(o.geometry);
             if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
                 for (var k in m) { if (m[k] && m[k].isTexture) disposables.push(m[k]); }
