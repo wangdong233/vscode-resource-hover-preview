@@ -1,6 +1,6 @@
 {
   "name": "resource-hover-preview",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "VSCode 资源管理器悬停浮动预览（图片/视频/PDF/字体/音频/3D）",
   "type": "module",
   "bin": {
