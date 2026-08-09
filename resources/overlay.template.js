@@ -47,9 +47,10 @@
         popup.id = "mp-popup";
         var toolbar = document.createElement("div"); toolbar.className = "mp-toolbar";
         var fname = document.createElement("span"); fname.className = "mp-fname";
-        var pinBtn = document.createElement("button"); pinBtn.className = "mp-pin"; pinBtn.textContent = "📌";
-        var closeBtn = document.createElement("button"); closeBtn.className = "mp-close"; closeBtn.textContent = "✕";
-        toolbar.append(fname, pinBtn, closeBtn);
+        var pinBtn = document.createElement("button"); pinBtn.className = "mp-pin"; pinBtn.textContent = "📌"; pinBtn.title = "固定（不随鼠标离开消失）";
+        var resetBtn = document.createElement("button"); resetBtn.className = "mp-reset"; resetBtn.textContent = "⤢"; resetBtn.title = "恢复默认大小";
+        var closeBtn = document.createElement("button"); closeBtn.className = "mp-close"; closeBtn.textContent = "✕"; closeBtn.title = "关闭";
+        toolbar.append(fname, resetBtn, pinBtn, closeBtn);
         var content = document.createElement("div"); content.className = "mp-content";
         var corners = ["nw", "ne", "sw", "se"];
         var handles = corners.map(function (c) {
@@ -59,7 +60,7 @@
         handles.forEach(function (h) { popup.appendChild(h); });
         injectPopupCss();
         document.body.appendChild(popup);
-        bindInteractions(popup, pinBtn, closeBtn);
+        bindInteractions(popup, pinBtn, closeBtn, resetBtn);
         loadPopupSize(popup);
         return popup;
     }
@@ -69,17 +70,19 @@
         var style = document.createElement("style");
         style.id = "mp-popup-css";
         style.textContent = [
-            "#mp-popup{position:fixed;z-index:999999;background:var(--vscode-editor-background,#1e1e1e);border:1px solid var(--vscode-editorWidget-border,#454545);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);overflow:hidden;display:flex;flex-direction:column;min-width:200px;min-height:150px;width:400px;height:300px}",
-            ".mp-toolbar{display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--vscode-editorWidget-background,#252526);border-bottom:1px solid var(--vscode-editorWidget-border,#454545);font-size:12px;user-select:none}",
+            "#mp-popup{position:fixed;z-index:999999;background:var(--vscode-editorWidget-background,#252526);border:1px solid var(--vscode-widget-border,rgba(255,255,255,.08));border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.4);overflow:hidden;display:flex;flex-direction:column;min-width:200px;min-height:150px;width:400px;height:300px}",
+            ".mp-toolbar{display:flex;align-items:center;gap:2px;padding:2px 6px;font-size:11px;user-select:none;color:var(--vscode-descriptionForeground,rgba(255,255,255,.5))}",
             ".mp-toolbar .mp-fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-            ".mp-toolbar button{background:none;border:none;color:inherit;cursor:pointer;padding:2px 4px}",
-            ".mp-content{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center}",
+            ".mp-toolbar button{background:none;border:none;color:var(--vscode-foreground,#ccc);cursor:pointer;padding:2px 6px;font-size:13px;border-radius:4px;opacity:.35;transition:opacity .12s,background .12s}",
+            ".mp-toolbar button:hover{opacity:1;background:var(--vscode-toolbar-hoverBackground,rgba(255,255,255,.12))}",
+            "#mp-popup:hover .mp-toolbar button{opacity:.7}",
+            ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center}",
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain}",
-            ".mp-resize{position:absolute;width:14px;height:14px;z-index:2}",
-            ".mp-resize-nw{top:-1px;left:-1px;cursor:nwse-resize}",
-            ".mp-resize-ne{top:-1px;right:-1px;cursor:nesw-resize}",
-            ".mp-resize-sw{bottom:-1px;left:-1px;cursor:nesw-resize}",
-            ".mp-resize-se{bottom:-1px;right:-1px;cursor:nwse-resize}",
+            ".mp-resize{position:absolute;width:12px;height:12px;z-index:3}",
+            ".mp-resize-nw{top:0;left:0;cursor:nwse-resize}",
+            ".mp-resize-ne{top:0;right:0;cursor:nesw-resize}",
+            ".mp-resize-sw{bottom:0;left:0;cursor:nesw-resize}",
+            ".mp-resize-se{bottom:0;right:0;cursor:nwse-resize}",
         ].join("\n");
         document.head.appendChild(style);
     }
@@ -100,13 +103,17 @@
     }
 
     // ===== 四角缩放（对角固定）+ pin + close =====
-    function bindInteractions(popup, pinBtn, closeBtn) {
+    function bindInteractions(popup, pinBtn, closeBtn, resetBtn) {
         popup.querySelectorAll(".mp-resize").forEach(function (handle) {
             handle.addEventListener("mousedown", function (e) {
                 e.preventDefault(); e.stopPropagation();
                 var corner = handle.dataset.corner;
                 var startX = e.clientX, startY = e.clientY, r = popup.getBoundingClientRect();
-                var onMove = function (ev) {
+                // rAF 节流：每帧最多设一次 style（60fps），避免高频 mousemove reflow 卡顿
+                var lastEv = e, rafId = null;
+                var applyResize = function () {
+                    rafId = null;
+                    var ev = lastEv;
                     var w = r.width, h = r.height, left = r.left, top = r.top;
                     if (corner.indexOf("e") >= 0) w = Math.max(200, r.width + (ev.clientX - startX));
                     if (corner.indexOf("s") >= 0) h = Math.max(150, r.height + (ev.clientY - startY));
@@ -115,14 +122,18 @@
                     popup.style.width = w + "px"; popup.style.height = h + "px";
                     popup.style.left = left + "px"; popup.style.top = top + "px";
                 };
+                var onMove = function (ev) { lastEv = ev; if (!rafId) rafId = requestAnimationFrame(applyResize); };
                 var onUp = function () {
                     document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+                    if (rafId) cancelAnimationFrame(rafId);
+                    applyResize();  // 最终精确
                     savePopupSize(popup.offsetWidth, popup.offsetHeight);
                 };
                 document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
             });
         });
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.textContent = isPinned ? "📌(固定)" : "📌"; });
+        resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
         closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; hidePopup(); });
     }
 
