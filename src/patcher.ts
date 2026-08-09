@@ -195,9 +195,21 @@ function readOrGenToken(installDir: string): string {
 }
 function readFileSafe(p: string): string { return fs.readFileSync(p, "utf8"); }
 function findVsix(): string | null {
-    const candidates = [path.join(HERE, "..", "companion"), HERE].flatMap(d =>
-        fs.existsSync(d) ? fs.readdirSync(d).filter(f => f.endsWith(".vsix")).map(f => path.join(d, f)) : []);
-    return candidates[0] ?? null;
+    // 找最新 vsix（mtime 排序，防 companion/ 残留旧名 vsix 被选——真机 bug：旧 resource-hover-preview-companion-0.1.0.vsix 字母序在新名前）
+    const dirs = [path.join(HERE, "..", "companion"), HERE];
+    const all: { file: string; mtime: number }[] = [];
+    for (const d of dirs) {
+        if (!fs.existsSync(d)) continue;
+        for (const f of fs.readdirSync(d)) {
+            if (f.endsWith(".vsix")) {
+                const fp = path.join(d, f);
+                try { all.push({ file: fp, mtime: fs.statSync(fp).mtimeMs }); } catch { /* ignore */ }
+            }
+        }
+    }
+    if (!all.length) return null;
+    all.sort((a, b) => b.mtime - a.mtime);  // 最新 mtime 优先
+    return all[0].file;
 }
 function copyDirFiles(srcDir: string, destDir: string, ext: string): void {
     if (!fs.existsSync(srcDir)) return;
