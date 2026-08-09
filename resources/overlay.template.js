@@ -28,7 +28,7 @@
     var activeFontFace = null;
     var activePdf = null;
 
-    // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（v0.4+ 升 /config 单源 type→mime，R-INT-02）
+    // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
     var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
@@ -76,12 +76,14 @@
         _inflight.set(key, prom);
         return prom;
     }
+    // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
+    function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
     // fetcherFor：类型分派取数据 → {url, bytes}（image=data URL；font/pdf/3d=blob URL）
     function fetcherFor(p, type) {
-        var url = SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN);
+        var url = previewUrl(p, type);
         if (type === "image") {
             return function () { return fetch(url).then(function (r) { if (!r.ok) throw new Error("server " + r.status); return r.json(); })
-                .then(function (d) { return { url: "data:" + d.mime + ";base64," + d.base64, bytes: d.sizeBytes || d.base64.length }; }); };
+                .then(function (d) { return { url: "data:" + d.mime + ";base64," + d.base64, bytes: d.base64.length }; }); };  // bytes=data URL 实际驻留字节（base64 串长，复审：原 sizeBytes 是原始字节，低估 ~4/3）
         }
         return function () { return fetch(url).then(function (r) { if (!r.ok) throw new Error("server " + r.status); return r.arrayBuffer(); })
             .then(function (ab) { return { url: URL.createObjectURL(new Blob([ab])), bytes: ab.byteLength }; }); };
@@ -209,7 +211,7 @@
         });
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.classList.toggle("is-pinned", isPinned); });  // Wave2：class 高亮替代文本（窄 rail 不撑宽）
         resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
-        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 清 currentHovered/lastRenderedItem（审查 3.1：closeBtn 是唯一不清者，致 re-hover 同项不触发）
+        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; pinBtn.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 清 currentHovered/lastRenderedItem + is-pinned class（复审 rev3：popup 单例复用后 pin 按钮视觉状态机说谎）
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
         popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); });  // 在 popup 上 → 取消关闭
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
@@ -306,15 +308,16 @@
     }
 
     // v0.2 视频：直 HTTP src（浏览器原生 Range seek，非 blob；doc08 §1）
-    function renderVideo(filePath) {
+    function renderVideo(filePath, ep) {
         var content = document.querySelector(".mp-content");
         var video = document.createElement("video");
-        video.src = SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=video&token=" + encodeURIComponent(TOKEN);
+        video.src = previewUrl(filePath, "video");
         video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
-        video.addEventListener("error", function () { showPopupError("video 加载失败"); });
+        video.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("video 加载失败"); });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
+            if (ep !== renderEpoch) return;  // 复审：content 已被新 hover 替换则不叠杂散按钮
             var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "font-size:24px;padding:12px;cursor:pointer";
             btn.addEventListener("click", function () { video.play(); btn.remove(); });
             content.appendChild(btn);
@@ -322,13 +325,13 @@
     }
 
     // v0.3 音频：<audio> 直 HTTP src（复用 video/serveStream 路径，波形砍 [11 F2]）
-    function renderAudio(filePath) {
+    function renderAudio(filePath, ep) {
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
-        audio.src = SERVER_BASE + "/preview?file=" + encodeURIComponent(filePath) + "&type=audio&token=" + encodeURIComponent(TOKEN);
+        audio.src = previewUrl(filePath, "audio");
         audio.controls = true; audio.style.width = "100%";
         content.replaceChildren(audio);
-        audio.addEventListener("error", function () { showPopupError("audio 加载失败"); });
+        audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
     }
 
     // v0.3 字体：FontFace ArrayBuffer 源（免 font-src CSP）+ canvas glyph grid（doc08 §3）。Wave3：走缓存。
@@ -409,6 +412,8 @@
         if (ep !== renderEpoch) return;
         var ab = await fetch(url).arrayBuffer();
         if (ep !== renderEpoch) return;
+        var gltf = await new T.GLTFLoader().parseAsync(ab, "");  // 复审：parseAsync 纯 CPU 解析，提到 WebGLRenderer 之前——await 窗口零 GPU context，stale 时连 renderer 都未创建
+        if (ep !== renderEpoch) return;
         var content = document.querySelector(".mp-content");
         var canvas = document.createElement("canvas");
         canvas.style.width = "100%"; canvas.style.height = "100%";
@@ -419,8 +424,6 @@
         var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
         renderer.setSize(cw, ch, false);
         var controls = new T.OrbitControls(camera, canvas);
-        var gltf = await new T.GLTFLoader().parseAsync(ab, "");
-        if (ep !== renderEpoch) { controls.dispose(); renderer.dispose(); renderer.forceContextLoss(); return; }  // stale → 销毁防 GPU 泄漏
         scene.add(gltf.scene);
         var disposables = [];
         scene.traverse(function (o) {  // v0.2-v0.5审查🟡：makeDisposeGLTF 遍历收集（doc08 §5）
@@ -469,12 +472,13 @@
         var loading = document.createElement("div"); loading.textContent = "loading…"; loading.style.color = "#888"; content.appendChild(loading);
         var ep = ++renderEpoch;  // 渲染代际（审查 3.6：异步 render 完成前若已 hover 新项 → 旧 render 作废）
         pinCurrent(fullPath, type);  // Wave3：缓存 pin 当前项（防 prefetch 邻项 LRU 驱逐正在显示的项）
-        if (type === "image") renderImage(fullPath, ep).catch(function (e) { showPopupError(e.message); });
-        else if (type === "video") renderVideo(fullPath);
-        else if (type === "audio") renderAudio(fullPath);
-        else if (type === "font") renderFont(fullPath, ep).catch(function (e) { showPopupError(e.message); });
-        else if (type === "pdf") renderPdf(fullPath, ep).catch(function (e) { showPopupError(e.message); });
-        else if (type === "3d") render3D(fullPath, ep).catch(function (e) { showPopupError(e.message); });
+        // 复审：error 路径也守 ep（stale 渲染的 rejection 不覆盖当前 live popup；ep 在 catch 闭包内）
+        if (type === "image") renderImage(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
+        else if (type === "video") renderVideo(fullPath, ep);
+        else if (type === "audio") renderAudio(fullPath, ep);
+        else if (type === "font") renderFont(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
+        else if (type === "pdf") renderPdf(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
+        else if (type === "3d") render3D(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         schedulePrefetch(rowEl);  // Wave3 a：预取 ±2 邻行填缓存（消除移动间隔）
     }
 

@@ -24,7 +24,8 @@ export function buildOverlayJs(templateJs: string, version: string): { js: strin
 
 // bake mp-config.js（companion 用，每次 activate 写 workbench 目录）。
 // 纯 window 属性赋值（非 inline script、非 TT sink），script-src 'self' 放行 + TT 不管（spike6 实证）。
-// enabled 仅在 === false 时写入（默认不写 → overlay 视为 true，避免老 mp-config 误关，审查 2.4）。
+// enabled：patcher 恒传 boolean（true|false，均写入）；undefined 时删除（老 mp-config 无此字段 → overlay 视为 true 默认开）。
+// overlay 严格 === false 判禁用（true/undefined 都开）。复审 rev1：注释对齐代码（原称仅 false 写入，实 undefined 才删）。
 export function buildConfigJs(config: OverlayConfig): string {
     const safe = { ...config };
     if (safe.enabled === undefined) delete safe.enabled;

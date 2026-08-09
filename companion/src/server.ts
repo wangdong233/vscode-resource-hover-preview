@@ -10,7 +10,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const ALLOWED_HOST = /^(127\.0\.0\.1|localhost|\[::1\]):(\d+)$/;
 const ALLOWED_ORIGIN = /^vscode-file:|^file:/;
 
-// 媒体类型→mime 单一真相源（/config 端点，overlay 消费，不硬编码 MEDIA_TYPES）
+// 媒体类型→mime（serveStream/serveImage 消费；overlay 用本地 *_EXTS 双轨，per-type sync 由 test-contract-sync 闸门保证一致）
 export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     image: { exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"], mime: "image/*" },
     video: { exts: ["mp4", "webm", "mov", "mkv", "avi", "m4v"], mime: "video/mp4" },
@@ -119,7 +119,7 @@ function serveImage(file: string, res: http.ServerResponse) {
     fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(500); res.end("read error"); return; }
         const ext = path.extname(file).slice(1);
-        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext);
+        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext);  // 复审 rev1：svg 须 image/svg+xml（image/svg 非标，data URL 不渲染）
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });

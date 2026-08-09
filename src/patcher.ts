@@ -86,19 +86,17 @@ function installCompanion(): void {
 }
 
 // ===== detectAndPatch（--patch-only / 默认 都用）：编排，顺序关键 =====
-async function detectAndPatch(install: Install): Promise<"fresh" | "patched" | "failed"> {
+async function detectAndPatch(install: Install, fixedToken: string): Promise<"fresh" | "patched" | "failed"> {
     const { workbenchHtmlPath, productJsonPath, outDir, appDir } = install;
     return withLock(appDir, async () => {
         const html = fs.readFileSync(workbenchHtmlPath, "utf8");
         const { state } = readWorkbenchState(html);
-        // bake mp-config.js：token 固定（INSTALL_DIR/mp-token.json，首次生成），port 17741 固定。
+        // bake mp-config.js：token 固定（main 调一次 readOrGenToken 传入，复审 rev2：多 install 并发 Promise.all 不各自 gen 致 token 分叉 403）。
         // ⚠️ 必须固定：workbench renderer 加载早于 companion activate，每次 activate 随机 token
         //   → mp-config(workbench 读) vs server(activate 新 token) 永久不匹配 → fetch 永远 403。
-        const installDir4cfg = locateInstallDir();
-        if (installDir4cfg) {
-            const fixedToken = readOrGenToken(installDir4cfg);
+        if (fixedToken) {
             writeAtomicSync(path.join(path.dirname(workbenchHtmlPath), "mp-config.js"),
-                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));  // 统一 buildConfigJs（v0.1审查🟡：消除内联双 bake）+ enabled 开关（审查 2.4，companion 传 env）
+                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));
         }
         if (state === "fresh") {
             // v0.1审查🔵：fresh 也校验 mp-overlay.js 存在（被删则补拷，否则 script 404 静默死）
@@ -175,8 +173,11 @@ async function main() {
         return;
     }
     if (cmd === "--revert") { runRevert(installs); return; }
+    // 复审 rev2：token 在 main 调一次（locateInstallDir 多 install 共享同一 INSTALL_DIR；Promise.all 并发各自 readOrGenToken 会 gen 不同 token → 一边 mp-config 写旧 → 403）
+    const installDir = locateInstallDir();
+    const fixedToken = installDir ? readOrGenToken(installDir) : "";
     if (cmd === "--patch-only") {
-        const states = await Promise.all(installs.map(inst => detectAndPatch(inst).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
+        const states = await Promise.all(installs.map(inst => detectAndPatch(inst, fixedToken).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
         console.log("[mp] --patch-only done. 若 patched 请 Cmd+Q 完全退出重启（Reload Window 不生效）");
         console.log(`[mp-result] patched=${states.includes("patched")}`);  // 结构化 marker（审查 3.4：extension 匹配固定串，不再 flavor 耦合 "VSCode: patched"）
         return;
@@ -184,7 +185,8 @@ async function main() {
     // 默认 --patch（npx）：install companion → installRuntimeFiles（要 INSTALL_DIR）→ patch
     installCompanion();
     installRuntimeFiles();
-    const states = await Promise.all(installs.map(inst => detectAndPatch(inst).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
+    const fixedToken2 = installDir ? readOrGenToken(installDir) : fixedToken;  // installRuntimeFiles 后 token 已生成，重读同值
+    const states = await Promise.all(installs.map(inst => detectAndPatch(inst, fixedToken2).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
     console.log("[mp] done. 请 Cmd+Q 完全退出重启 VSCode（Reload Window 用缓存不重读 workbench.html，patch 不生效）");
     console.log(`[mp-result] patched=${states.includes("patched")}`);
 }
