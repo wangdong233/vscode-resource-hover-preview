@@ -81,13 +81,19 @@ One command, zero side effects.
 
 ---
 
-## 💖 Support
+## 💝 Support
 
-If this tool helps you:
+If vscode-resource-hover-preview helps you, buy the author a coffee ☕
 
-- ⭐ **Star** the [GitHub repo](https://github.com/wangdong233/vscode-resource-hover-preview)
-- 📢 **Share** with colleagues and friends
-- 🐛 [Report bugs / Request features](https://github.com/wangdong233/vscode-resource-hover-preview/issues)
+<div align="center">
+
+| WeChat | Alipay |
+| :---: | :---: |
+| <img src="docs/images/support-wechat.jpg" height="200" alt="WeChat"> | <img src="docs/images/support-alipay.jpg" height="200" alt="Alipay"> |
+
+</div>
+
+Or ⭐ Star, open an Issue / PR — all support counts.
 
 ---
 

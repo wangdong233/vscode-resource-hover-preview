@@ -81,13 +81,19 @@ npx -y vscode-resource-hover-preview@latest --revert
 
 ---
 
-## 💖 支持作者
+## 💝 支持作者
 
-如果这个工具帮到了你：
+如果 vscode-resource-hover-preview 帮到你，欢迎请作者喝杯咖啡 ☕
 
-- ⭐ **Star** [GitHub 仓库](https://github.com/wangdong233/vscode-resource-hover-preview) —— 让更多人看到
-- 📢 **分享**给同事朋友
-- 🐛 [反馈 Bug / 提 Feature](https://github.com/wangdong233/vscode-resource-hover-preview/issues)
+<div align="center">
+
+|                                微信                                |                                支付宝                                |
+| :----------------------------------------------------------------: | :------------------------------------------------------------------: |
+| <img src="docs/images/support-wechat.jpg" height="200" alt="微信"> | <img src="docs/images/support-alipay.jpg" height="200" alt="支付宝"> |
+
+</div>
+
+或 ⭐ Star、提 Issue / PR —— 都是对作者的支持。
 
 ---
 
