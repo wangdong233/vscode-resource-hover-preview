@@ -96,10 +96,10 @@ function serveStream(file: string, type: string, req: http.IncomingMessage, res:
         const start = parseInt(m[1], 10);
         const end = Math.min(m[2] ? parseInt(m[2], 10) : stat.size - 1, stat.size - 1);
         if (start > end || start >= stat.size) { res.writeHead(416); res.end("unsatisfiable"); return; }
-        res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, "Content-Type": mime });
+        res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, "Content-Type": mime, "Cache-Control": "private, max-age=300" });
         fs.createReadStream(file, { start, end }).pipe(res);
     } else {
-        res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes" });
+        res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=300" });  // Wave3 c：HTTP 缓存（video/audio 流式，不经 overlay blob 缓存）
         fs.createReadStream(file).pipe(res);
     }
 }
@@ -120,7 +120,7 @@ function serveImage(file: string, res: http.ServerResponse) {
         if (err) { res.writeHead(500); res.end("read error"); return; }
         const ext = path.extname(file).slice(1);
         const mime = "image/" + (ext === "jpg" ? "jpeg" : ext);
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });
 }
