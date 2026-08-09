@@ -4,6 +4,7 @@ import * as http from "http";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 
 const BASE_PORT = 17741;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -63,9 +64,12 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
 }
 
 function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
-    const file = url.searchParams.get("file");
+    let file = url.searchParams.get("file");
     const type = url.searchParams.get("type");
     if (!file || !type) { res.writeHead(400); res.end("missing file or type"); return; }
+    // aria-label 路径来自 labelService.getUriLabel，desktop 默认 tildify（~/Documents/...）
+    // Node path.resolve 不展开 ~ → 当相对 cwd 解析 → realpathSync ENOENT → 404。须先映射 homedir。
+    if (file.startsWith("~")) file = file.replace(/^~/, os.homedir());
     const resolved = path.resolve(file);
     // 闸门4 containment（v0.1审查🔴修）：realpath 防符号链接逃逸 + workspace 归属校验
     let realPath: string;
