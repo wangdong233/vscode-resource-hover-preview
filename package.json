@@ -1,10 +1,10 @@
 {
-  "name": "resource-hover-preview",
-  "version": "0.1.1",
+  "name": "vscode-resource-hover-preview",
+  "version": "0.2.0",
   "description": "VSCode 资源管理器悬停浮动预览（图片/视频/PDF/字体/音频/3D）",
   "type": "module",
   "bin": {
-    "resource-hover-preview": "dist/patcher.js"
+    "vscode-resource-hover-preview": "dist/patcher.js"
   },
   "scripts": {
     "build": "tsc",

@@ -1,5 +1,5 @@
 /*mp-overlay:__VERSION__:__HASH__*/
-// resource-hover-preview overlay —— 注入 VSCode workbench Renderer（Chromium）。
+// vscode-resource-hover-preview overlay —— 注入 VSCode workbench Renderer（Chromium）。
 // 详见 doc/03_浮动预览弹窗设计.md + doc/06_DOM选择器容错策略.md + doc/parse/pares1.md。
 // ⚠️ 全程 createElement（Trusted Types 禁 innerHTML，Spike1 实证 TypeError TrustedHTML）。
 // window.__MP_CONFIG__ 由 mp-config.js（companion bake）先注入，本文件只读取。

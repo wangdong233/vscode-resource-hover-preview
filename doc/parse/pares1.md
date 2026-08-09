@@ -7,7 +7,7 @@
 **范围**：patch 机制 + 图片悬停预览（浮动 + 四角缩放 + 四象限定位 + 尺寸记忆 + pin）。不做自由拖拽（[11 F1](../11_rejected-by-design清单.md)）。
 
 **验收**（07，关键项）：
-1. `npx -y resource-hover-preview@latest` 一键安装（patch + 提示 Cmd+Q 完全退出重启）
+1. `npx -y vscode-resource-hover-preview@latest` 一键安装（patch + 提示 Cmd+Q 完全退出重启）
 2. **完全重启（Cmd+Q 后重开）** 后悬停 .png/.jpg/.gif/.webp → ~300ms 浮动弹窗显示图片
 3. 四象限智能定位 + 四角缩放 + 尺寸记忆 + pin
 4. 非媒体文件不弹窗
@@ -31,7 +31,7 @@
 **cc-status-dot**：patcher（npx 默认模式）的 `installRuntimeFiles()` 把 `dist/patch.js + dist/src/*` 复制到 **INSTALL_DIR = companion 扩展安装目录**（`~/.vscode/extensions/<publisher>.<companion-name>-<version>/`）。companion 的 `PATCH_JS = path.join(INSTALL_DIR, "patch.js")`，activate 时 spawn 它。
 
 **本项目**：
-- INSTALL_DIR = `~/.vscode/extensions/wangdong.resource-hover-preview-companion-0.1.0/`
+- INSTALL_DIR = `~/.vscode/extensions/wangdong.vscode-resource-hover-preview-companion-0.1.0/`
 - patcher 默认模式（npx）：discover → installRuntimeFiles（复制 `dist/patcher.js + dist/*.js` 到 INSTALL_DIR + 复制 `resources/overlay.template.js`/lib 到 INSTALL_DIR）→ installCompanion（`code --install-extension` vsix）→ patchWorkbench
 - companion activate：spawn `INSTALL_DIR/patcher.js --patch-only`
 

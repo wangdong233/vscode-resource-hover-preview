@@ -1,8 +1,8 @@
 <div align="center">
 
-# resource-hover-preview
+# vscode-resource-hover-preview
 
-[![npm](https://img.shields.io/npm/v/resource-hover-preview?style=flat-square&color=CCA700)](https://www.npmjs.com/package/resource-hover-preview)
+[![npm](https://img.shields.io/npm/v/vscode-resource-hover-preview?style=flat-square&color=CCA700)](https://www.npmjs.com/package/vscode-resource-hover-preview)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](#license)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 
@@ -41,7 +41,7 @@
 **Prerequisite**: Node.js 18+, VSCode (macOS / Windows / Linux).
 
 ```bash
-npx -y resource-hover-preview@latest
+npx -y vscode-resource-hover-preview@latest
 ```
 
 **Cmd+Q** (Mac) / Close all windows (Win/Linux) → Reopen VSCode.
@@ -72,7 +72,7 @@ VSCode updates overwrite the patch, but **the companion extension automatically 
 ## 🔄 Uninstall
 
 ```bash
-npx -y resource-hover-preview@latest --revert
+npx -y vscode-resource-hover-preview@latest --revert
 ```
 
 One command, zero side effects.

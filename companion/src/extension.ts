@@ -20,7 +20,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 3. 起 server（绑 127.0.0.1，用固定 token + roots containment；port 17741 固定）
     const { server, port } = startPreviewServer(token, roots);
     context.subscriptions.push({ dispose: () => server.close() });
-    output.appendLine(`[mp] server 127.0.0.1:${port} token=${token ? "ok" : "MISSING(请 npx resource-hover-preview 安装)"}`);
+    output.appendLine(`[mp] server 127.0.0.1:${port} token=${token ? "ok" : "MISSING(请 npx vscode-resource-hover-preview 安装)"}`);
 
     // 3. spawn patcher --patch-only（patcher 读 INSTALL_DIR token + port 17741 bake mp-config；不传 env）
     setImmediate(() => runPatcher(output));
@@ -42,7 +42,7 @@ function readTokenFromInstallDir(): string {
 // spawn INSTALL_DIR/patcher.js --patch-only（非阻塞 cp.spawn + Promise，30s 超时；cc-status-dot runPatcher 范式）
 function runPatcher(output: vscode.OutputChannel) {
     if (!fs.existsSync(PATCH_JS)) {
-        vscode.window.showWarningMessage(`Resource Hover Preview: patcher not found at ${PATCH_JS}. Re-run \`npx resource-hover-preview\`.`);
+        vscode.window.showWarningMessage(`Resource Hover Preview: patcher not found at ${PATCH_JS}. Re-run \`npx vscode-resource-hover-preview\`.`);
         return;
     }
     const child = cp.spawn(findNodeBin(), [PATCH_JS, "--patch-only"], {

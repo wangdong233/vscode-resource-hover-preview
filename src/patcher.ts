@@ -18,7 +18,7 @@ import { buildOverlayJs, buildConfigJs } from "./overlay-bake.js";  // buildConf
 import { cmpVerStr } from "./semver.js";  // v0.1审查🟡：locateInstallDir semver 排序（消除死代码）
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)); // dist/（npx）或 INSTALL_DIR（--patch-only）
-const COMPANION_ID = "wangdong.resource-hover-preview-companion"; // publisher.name
+const COMPANION_ID = "wangdong.vscode-resource-hover-preview-companion"; // publisher.name
 
 // ===== mp-overlay.js 定位（install 时 bake 到 INSTALL_DIR；--patch-only 从 INSTALL_DIR 复制）=====
 function findBakedOverlay(install: Install): string | null {
@@ -39,7 +39,7 @@ function findOverlayTemplate(): string | null {
 function locateInstallDir(): string | null {
     const extRoot = path.join(os.homedir(), ".vscode", "extensions");
     if (!fs.existsSync(extRoot)) return null;
-    // 版本前缀匹配 wangdong.resource-hover-preview-companion-*
+    // 版本前缀匹配 wangdong.vscode-resource-hover-preview-companion-*
     const match = fs.readdirSync(extRoot)
         .filter(d => d.startsWith(COMPANION_ID + "-"))
         .sort((a, b) => cmpVerStr(a.slice(COMPANION_ID.length + 1), b.slice(COMPANION_ID.length + 1)))  // semver 正确排序（v0.1审查🟡：字典序会让 0.10.0<0.2.0）
