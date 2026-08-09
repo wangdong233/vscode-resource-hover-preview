@@ -1,11 +1,11 @@
 {
   "name": "vscode-resource-hover-preview-companion",
   "displayName": "Resource Hover Preview",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "wangdong",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wangdong233/vscode-vscode-resource-hover-preview.git"
+    "url": "https://github.com/wangdong233/vscode-resource-hover-preview.git"
   },
   "description": "原生资源管理器悬停浮动预览（伴随扩展：触发 patch + 跑 EH server）",
   "main": "./dist/extension.js",
