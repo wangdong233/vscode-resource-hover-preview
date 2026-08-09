@@ -148,23 +148,35 @@
     function setupHoverListeners() {
         var root = document.querySelector(".explorer-viewlet") || document.querySelector(".explorer-folders-view") || document.querySelector(".part.sidebar");
         if (!root) return;
-        root.addEventListener("mouseover", function (e) {  // capture phase（true）：VSCode HoverController 在 a.label-name 上 stopPropagation 拦冒泡，capture 先于它捕获
+        // ⚠️ 真机 bug1 彻查：VSCode HoverController 在 a.label-name 上吞了 mouseover（capture 也到不了）。
+        //   改用 mousemove——VSCode hover 不在 mousemove 上拦截，冒泡+capture 都可靠。
+        //   mousemove 高频，currentHovered 去重（同一行不重复）+ setTimeout 防抖。
+        root.addEventListener("mousemove", function (e) {
             if (!isExplorerActive()) return;
             var item = e.target.closest(".monaco-list-row[role='treeitem']") || e.target.closest("[role='treeitem']");
-            if (!item || item === currentHovered) return;
+            if (!item) {
+                // 鼠标离开文件项区域 → 计划隐藏
+                if (currentHovered && !isPinned) {
+                    if (hideTimer) clearTimeout(hideTimer);
+                    hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned) hidePopup(); currentHovered = null; }, HIDE_DELAY);
+                }
+                return;
+            }
+            if (item === currentHovered) return;  // 同一行不重复（mousemove 高频去重）
             currentHovered = item;
             if (hoverTimer) clearTimeout(hoverTimer);
+            if (hideTimer) clearTimeout(hideTimer);  // 进入新行取消隐藏计划
             var rect = item.getBoundingClientRect();
             hoverTimer = setTimeout(function () { if (currentHovered === item) handleHover(item, rect); }, HOVER_DELAY);
         }, true);
-        root.addEventListener("mouseout", function (e) {
-            var item = e.target.closest("[role='treeitem']");
-            if (item === currentHovered) {
+        // mouseleave 兜底：鼠标快速划出 root（最后 mousemove 可能漏）
+        root.addEventListener("mouseleave", function () {
+            if (currentHovered && !isPinned) {
                 if (hoverTimer) clearTimeout(hoverTimer);
                 if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned) hidePopup(); }, HIDE_DELAY);
+                hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned) hidePopup(); currentHovered = null; }, HIDE_DELAY);
             }
-        }, true);
+        });
     }
     function isMouseInPopup() { var p = document.getElementById("mp-popup"); return p && p.matches(":hover"); }
 
