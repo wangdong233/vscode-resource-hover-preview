@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.5.0"; // 每次 overlay 内容变更 bump（v0.2-v0.5 渲染器已加，bump 触发曾 v0.1 机器 re-patch）
+export const INJECT_VERSION = "v0.6.0"; // bump 触发 re-patch：bug1(capture)+bug2/3(tildify ~)+bug4(includes)+vsix残留修
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;
