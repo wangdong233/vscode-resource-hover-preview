@@ -79,6 +79,18 @@ One command, zero side effects.
 
 ---
 
+---
+
+## 💖 Support
+
+If this tool helps you:
+
+- ⭐ **Star** the [GitHub repo](https://github.com/wangdong233/vscode-resource-hover-preview)
+- 📢 **Share** with colleagues and friends
+- 🐛 [Report bugs / Request features](https://github.com/wangdong233/vscode-resource-hover-preview/issues)
+
+---
+
 ## License
 
 MIT

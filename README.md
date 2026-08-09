@@ -79,6 +79,18 @@ npx -y vscode-resource-hover-preview@latest --revert
 
 ---
 
+---
+
+## 💖 支持作者
+
+如果这个工具帮到了你：
+
+- ⭐ **Star** [GitHub 仓库](https://github.com/wangdong233/vscode-resource-hover-preview) —— 让更多人看到
+- 📢 **分享**给同事朋友
+- 🐛 [反馈 Bug / 提 Feature](https://github.com/wangdong233/vscode-resource-hover-preview/issues)
+
+---
+
 ## License
 
 MIT
