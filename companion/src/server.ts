@@ -16,8 +16,7 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     video: { exts: ["mp4", "webm", "mov", "mkv", "avi", "m4v"], mime: "video/mp4" },
     audio: { exts: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"], mime: "audio/mpeg" },
     font: { exts: ["ttf", "otf", "woff", "woff2"], mime: "font/*" },
-    pdf: { exts: ["pdf"], mime: "application/pdf" },
-    "3d": { exts: ["glb", "gltf", "stl", "obj", "fbx"], mime: "model/gltf-binary" },  // 0.4.3：恢复 stl/obj/fbx
+    "3d": { exts: ["glb", "gltf", "stl", "obj", "fbx"], mime: "model/gltf-binary" },  // 0.4.3：恢复 stl/obj/fbx；0.4.5：pdf 删除
 };
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }
@@ -80,14 +79,14 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     const stat = fs.statSync(realPath);
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
     if (type === "image") return serveImage(realPath, res);
-    if (type === "video" || type === "audio" || type === "pdf" || type === "3d" || type === "font") return serveStream(realPath, type, req, res);
+    if (type === "video" || type === "audio" || type === "3d" || type === "font") return serveStream(realPath, type, req, res);
     res.writeHead(400); res.end("unsupported type");
 }
 
-// range stream（video/audio/pdf/3d，原生 Range seek，doc04 硬化）
+// range stream（video/audio/3d/font，原生 Range seek，doc04 硬化）
 function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse) {
     const stat = fs.statSync(file);
-    const mimeMap: Record<string, string> = { video: "video/mp4", audio: "audio/mpeg", pdf: "application/pdf", "3d": "model/gltf-binary", font: "font/ttf" };
+    const mimeMap: Record<string, string> = { video: "video/mp4", audio: "audio/mpeg", "3d": "model/gltf-binary", font: "font/ttf" };
     const mime = mimeMap[type] || "application/octet-stream";
     const range = req.headers.range;
     if (range) {

@@ -16,7 +16,7 @@ const entryThree = existsSync(base + "entry-three.js") ? readFileSync(base + "en
 function extractArr(src, re) { const m = src.match(re); return m ? (m[1].match(/"([^"]+)"/g) || []).map(x => x.replace(/"/g, "")) : null; }
 
 // overlay var 名 → server type key
-const VAR2TYPE = { IMAGE: "image", VIDEO: "video", AUDIO: "audio", FONT: "font", PDF: "pdf", MODEL3D: "3d" };
+const VAR2TYPE = { IMAGE: "image", VIDEO: "video", AUDIO: "audio", FONT: "font", MODEL3D: "3d" };  // 0.4.5：PDF 删除
 let fails = 0;
 const fail = (m) => { console.error("  FAIL:", m); fails++; };
 

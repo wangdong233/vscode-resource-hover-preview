@@ -26,14 +26,13 @@
     // v0.2-v0.5审查🟡：disposeActiveRenderer 按 type 路由（防 font/pdf/3d 资源累积）
     var activeRendererType = null;
     var activeFontFace = null;
-    var activePdf = null;
+    // activePdf 移除（0.4.5：PDF 预览删除，用户判定无必要）
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
     var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
-    var PDF_EXTS = ["pdf"];
     var MODEL3D_EXTS = ["glb", "gltf", "stl", "obj", "fbx"];  // 0.4.3：恢复 stl/obj/fbx（entry-three 加 STLLoader/OBJLoader/FBXLoader，render3D 按格式分发）
 
     function detectMediaType(filename) {
@@ -42,7 +41,6 @@
         if (VIDEO_EXTS.indexOf(ext) >= 0) return "video";
         if (AUDIO_EXTS.indexOf(ext) >= 0) return "audio";
         if (FONT_EXTS.indexOf(ext) >= 0) return "font";
-        if (PDF_EXTS.indexOf(ext) >= 0) return "pdf";
         if (MODEL3D_EXTS.indexOf(ext) >= 0) return "3d";
         return null;
     }
@@ -236,7 +234,6 @@
         // v0.2-v0.5审查🟡：按 type 路由 dispose（防 FontFace/PDF worker/geometry 累积）
         if (activeRendererType === "3d" && typeof dispose3D === "function") dispose3D();
         else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
-        else if (activeRendererType === "pdf" && activePdf) { try { activePdf.destroy(); } catch (e) {} activePdf = null; }
         activeRendererType = null;
     }
     function disposeActiveRenderer() { disposeContent(); }  // handleHover 前/切类型时调
@@ -359,54 +356,27 @@
         content.replaceChildren(canvas);
     }
 
-    // v0.4 PDF：pdf.js v6 ESM blob 加载（doc08 §4+§6）。Spike7 真机验证前置（test-pending）。
+    // 3D 库加载：fetch /lib/ 文本 → eval 执行（IIFE bundle 设 globalThis.MP_THREE 副作用）。
+    // ⚠️ 0.4.5 根因修：原 import(blob:) 在 workbench 真机失败 "Failed to fetch"——CSP script-src 虽含 blob:，
+    //   但 require-trusted-types-for 'script' 拦了动态 import 的 blob 模块加载。改用 eval：eval 由 CSP 'unsafe-eval'
+    //   放行，Trusted Types 不管 eval（TT 仅管 DOM 字符串 sink 如 innerHTML/script.src，不管 eval）。
+    //   IIFE bundle 无 export（eval/script 上下文不支持 export 语法），故 eval IIFE 可行、eval ESM 不行（pdf.js 已删）。
+    //   ★ eval 首次执行 2MB bundle 会同步阻塞主线程 ~300-500ms（一次性，_libCache 缓存），是 3D 首屏延迟主因。
     var _libCache = {};
-    async function loadLibBlob(name, libPath) {
+    async function loadLib(name, libPath) {
         if (_libCache[name]) return _libCache[name];
         var resp = await fetch(SERVER_BASE + "/lib/" + libPath + "?token=" + encodeURIComponent(TOKEN));
         if (!resp.ok) throw new Error("load " + name + " failed: " + resp.status);
         var code = await resp.text();
-        var blobUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-        var mod = await import(blobUrl);  // blob 同源 + script-src blob: 允许
-        URL.revokeObjectURL(blobUrl);
-        _libCache[name] = mod;
-        return mod;
-    }
-    async function ensurePdfjs() {
-        if (_libCache.pdfjs) return _libCache.pdfjs;
-        var wresp = await fetch(SERVER_BASE + "/lib/pdf.worker.min.mjs?token=" + encodeURIComponent(TOKEN));
-        if (!wresp.ok) throw new Error("load pdf.worker failed: " + wresp.status);  // 复审 revContract：403/404 时错误体('forbidden token')勿喂 Worker
-        var wcode = await wresp.text();
-        var workerUrl = URL.createObjectURL(new Blob([wcode], { type: "text/javascript" }));  // blob worker（不 revoke）
-        var pdfjsLib = await loadLibBlob("pdfjs", "pdf.min.mjs");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-        return pdfjsLib;
-    }
-    async function renderPdf(filePath, ep) {
-        var lib = await ensurePdfjs();
-        if (ep !== renderEpoch) return;
-        var url = await fetchCached(filePath, "pdf", fetcherFor(filePath, "pdf"));
-        if (ep !== renderEpoch) return;
-        var ab = await (await fetch(url)).arrayBuffer();
-        if (ep !== renderEpoch) return;
-        var pdf = await lib.getDocument({ data: ab }).promise;
-        if (ep !== renderEpoch) { try { pdf.destroy(); } catch (e) {} return; }  // stale → 销毁防 worker 泄漏
-        activePdf = pdf; activeRendererType = "pdf";  // 登记 dispose（v0.2-v0.5审查🟡）
-        var page = await pdf.getPage(1);
-        if (ep !== renderEpoch) return;
-        var content = document.querySelector(".mp-content");
-        var canvas = document.createElement("canvas");
-        var viewport = page.getViewport({ scale: 1.0 });
-        canvas.width = viewport.width; canvas.height = viewport.height;
-        await page.render({ canvasContext: canvas.getContext("2d"), viewport: viewport }).promise;
-        if (ep !== renderEpoch) return;
-        content.replaceChildren(canvas);
+        (0, eval)(code);  // 全局 eval 执行 IIFE → 设 globalThis（免 import/TT）
+        _libCache[name] = window.MP_THREE;
+        return _libCache[name];
     }
 
     // v0.5 3D：three.js esbuild bundle（doc08 §5）。Spike7 真机验证前置（test-pending）。
     var threeReady = null;
     async function render3D(filePath, ep) {
-        await loadLibBlob("three", "mp-three.bundle.js");
+        await loadLib("three", "mp-three.bundle.js");
         if (ep !== renderEpoch) return;
         var T = window.MP_THREE;
         var url = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));
@@ -509,7 +479,6 @@
         else if (type === "video") renderVideo(fullPath, ep);
         else if (type === "audio") renderAudio(fullPath, ep);
         else if (type === "font") renderFont(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
-        else if (type === "pdf") renderPdf(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         else if (type === "3d") render3D(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         schedulePrefetch(rowEl);  // Wave3 a：预取 ±2 邻行填缓存（消除移动间隔）
     }
@@ -526,5 +495,13 @@
     }
 
     console.log("[mp-overlay] loaded", cfg.version);
-    waitForExplorer(function () { setupHoverListeners(); console.log("[mp-overlay] hover listeners attached"); });
+    waitForExplorer(function () {
+        setupHoverListeners();
+        console.log("[mp-overlay] hover listeners attached");
+        // 0.4.5：空闲期预 eval 2MB three bundle（移出首次 hover 的 ~300-500ms 主线程阻塞到启动后空闲，
+        //   首个 3D hover 命中 _libCache 秒过 eval，只剩 per-file 同步 parse）。requestIdleCallback 不阻塞启动交互。
+        if ("requestIdleCallback" in window) {
+            requestIdleCallback(function () { loadLib("three", "mp-three.bundle.js").catch(function () {}); });
+        }
+    });
 })();

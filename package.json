@@ -1,16 +1,16 @@
 {
   "name": "vscode-resource-hover-preview",
-  "version": "0.4.4",
-  "description": "VSCode 资源管理器悬停浮动预览（图片/视频/PDF/字体/音频/3D）",
+  "version": "0.4.5",
+  "description": "VSCode 资源管理器悬停浮动预览（图片/视频/字体/音频/3D）",
   "type": "module",
   "bin": {
     "vscode-resource-hover-preview": "dist/patcher.js"
   },
   "scripts": {
     "build": "tsc",
-    "build:lib": "mkdir -p resources/lib && cp node_modules/pdfjs-dist/build/pdf.min.mjs resources/lib/ && cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs resources/lib/ && esbuild entry-three.js --bundle --format=iife --outfile=resources/lib/mp-three.bundle.js",
+    "build:lib": "mkdir -p resources/lib && esbuild entry-three.js --bundle --format=iife --outfile=resources/lib/mp-three.bundle.js",
     "companion:build": "tsc -p companion/tsconfig.json",
-    "companion:package": "cd companion && rm -f *.vsix && mkdir -p resources/lib && cp ../resources/lib/* resources/lib/ && vsce package --no-dependencies",
+    "companion:package": "cd companion && rm -f *.vsix && rm -rf resources && mkdir -p resources/lib && cp ../resources/lib/* resources/lib/ && vsce package --no-dependencies",
     "prepublishOnly": "npm run build && npm run build:lib && npm run companion:build && npm run companion:package",
     "pretest": "npm run build && npm run companion:build",
     "patch": "tsx src/patcher.ts",
@@ -36,7 +36,6 @@
     "@types/vscode": "^1.84.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.1",
-    "pdfjs-dist": "^6.2.108",
     "three": "^0.185.1",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
