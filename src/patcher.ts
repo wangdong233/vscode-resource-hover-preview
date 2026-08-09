@@ -185,7 +185,12 @@ async function main() {
     // 默认 --patch（npx）：install companion → installRuntimeFiles（要 INSTALL_DIR）→ patch
     installCompanion();
     installRuntimeFiles();
-    const fixedToken2 = installDir ? readOrGenToken(installDir) : fixedToken;  // installRuntimeFiles 后 token 已生成，重读同值
+    // ★ 必须在 installCompanion【之后】RE-locate：新版本 companion 装到新版本化 dir（companion-0.4.x），
+    //   line 177 顶部算的旧 installDir 已失效/被删（code --install-extension 替换旧版本 dir）。
+    //   readOrGenToken 用旧 dir 会 gen 不同 token → mp-config 写 tokenA 而 server 读新 dir 的 tokenB
+    //   → overlay token ≠ server token → 全类型 preview 403（2026-08-09 真机回归根因，复审 rev2 token hoist 引入）。
+    const freshDir = locateInstallDir();
+    const fixedToken2 = freshDir ? readOrGenToken(freshDir) : "";
     const states = await Promise.all(installs.map(inst => detectAndPatch(inst, fixedToken2).then(s => { console.log(`[mp] ${inst.flavor}: ${s}`); return s; })));
     console.log("[mp] done. 请 Cmd+Q 完全退出重启 VSCode（Reload Window 用缓存不重读 workbench.html，patch 不生效）");
     console.log(`[mp-result] patched=${states.includes("patched")}`);

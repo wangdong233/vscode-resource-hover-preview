@@ -48,6 +48,11 @@ let wbContent = readFileSync(wb, "utf8");
 if (!wbContent.includes(`<!--mp-injected:${INJECT_VER}:`)) fail("absent→patch 后 marker 缺失");
 const product = JSON.parse(readFileSync(join(app, "product.json"), "utf8"));
 if (product.checksums[WB_REL] !== recompute(wb)) fail(`checksum 不匹配：product=${product.checksums[WB_REL]} ≠ recompute=${recompute(wb)}（★ 顺序 bug：checksum 必须在 workbench 写盘后算）`);
+// ★ token 一致性守门（2026-08-09 真机 403 回归根因）：mp-config.js（overlay 读）的 token 必须等于
+//   mp-token.json（server 读）——否则全类型 preview fetch 403。detectAndPatch 必须用 locateInstallDir 的同源 token bake。
+const tokenJson = JSON.parse(readFileSync(join(install, "mp-token.json"), "utf8")).token;
+const mpConfig = readFileSync(join(app, "out", "vs", "code", "electron-browser", "workbench", "mp-config.js"), "utf8");
+if (!mpConfig.includes(`"token":"${tokenJson}"`)) fail(`mp-config token ≠ mp-token.json token（overlay/server token 分叉 → 403）：mp-config 未含 token ${tokenJson.slice(0, 8)}…`);
 
 // [2] fresh → no-op byte-identical
 console.log("[2/3] fresh → no-op byte-identical（marker 版本匹配则不重写）...");

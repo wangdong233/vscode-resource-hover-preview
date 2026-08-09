@@ -8,6 +8,7 @@ __mp-patcher.lock
 *.mp.tmp
 .DS_Store
 .devteam/
+doc/
 resources/lib/              # 构建产物（pdf.min.mjs/worker copy + three esbuild bundle），build:lib 生成
 
 # spike 脚本产物（开发期临时 patch VSCode，不入库运行痕迹）
