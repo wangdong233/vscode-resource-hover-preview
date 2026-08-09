@@ -137,6 +137,14 @@
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.textContent = isPinned ? "📌(固定)" : "📌"; });
         resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
         closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; hidePopup(); });
+        // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
+        popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); });  // 在 popup 上 → 取消关闭
+        popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
+            if (!isPinned) {
+                if (hideTimer) clearTimeout(hideTimer);
+                hideTimer = setTimeout(function () { if (!isPinned) { hidePopup(); currentHovered = null; } }, HIDE_DELAY);
+            }
+        });
     }
 
     function savePopupSize(w, h) { try { localStorage.setItem(SIZE_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {} }
