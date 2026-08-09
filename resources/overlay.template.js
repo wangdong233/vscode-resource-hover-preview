@@ -183,7 +183,7 @@
                 }
                 return;
             }
-            if (item === currentHovered) return;  // 同一行不重复（mousemove 高频去重）
+            if (item === currentHovered) { if (hideTimer) clearTimeout(hideTimer); return; }  // 同一行不重复（去重）+ 取消 popup-mouseleave 设的 hideTimer（防 round-trip 闪烁）
             currentHovered = item;
             if (hoverTimer) clearTimeout(hoverTimer);
             if (hideTimer) clearTimeout(hideTimer);  // 进入新行取消隐藏计划
