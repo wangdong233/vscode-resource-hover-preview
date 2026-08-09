@@ -69,5 +69,11 @@ for (const c of jsRefClasses) {
     if (!cssClasses.has(c)) fail(`JS 行为引用 class ".${c}" 在 CSS 块无对应规则（typo 或漏 CSS）`);
 }
 
+// ⑥ await fetch().X() 优先级 bug 守门（复审 revTest 🔴：`await fetch(url).arrayBuffer()` 中 .arrayBuffer 调在 Promise 上非 Response → TypeError；
+//   正确写法 `await (await fetch(url)).arrayBuffer()` 或 `.then(r=>r.X())`。此静态闸门防 font/pdf/3d 全坏类回归）
+console.log("[6/6] await fetch().X() 优先级 bug 守门 ...");
+const badFetch = overlay.match(/await\s+fetch\([^)]*\)\.(arrayBuffer|text|json|blob)\s*\(/g);
+if (badFetch) for (const b of badFetch) fail(`await fetch().X() 优先级 bug（应 await (await fetch()).X() 或 .then）：${b}`);
+
 if (fails) { console.error(`\nFAIL: test-contract-sync（${fails} 处跨边界同步失配）`); process.exit(1); }
-console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class 全同步）");
+console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class + fetch优先级 全同步）");

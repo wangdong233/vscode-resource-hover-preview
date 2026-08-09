@@ -96,7 +96,7 @@
         for (var i = 0; i < 2; i++) { sib = sib.nextElementSibling; if (sib && sib.matches && sib.matches(".monaco-list-row")) rows.push(sib); else break; }
         rows.forEach(function (r) {
             var fn = getLabelName(r); if (!fn) return;
-            var type = detectMediaType(fn); if (!type || type === "video" || type === "audio") return;
+            var type = detectMediaType(fn); if (!type || type === "video" || type === "audio" || type === "3d") return;  // 流式 + 大 3D 二进制(数十 MB FBX/STL 常见)不预取(复审 revArch：预取大 3D 填爆缓存驱逐有用项)
             var p = getFullPath(r); if (!p || cacheGet(p, type)) return;
             fetchCached(p, type, fetcherFor(p, type)).catch(function () {});  // 填缓存，结果忽略
         });
@@ -338,7 +338,7 @@
     async function renderFont(filePath, ep) {
         var url = await fetchCached(filePath, "font", fetcherFor(filePath, "font"));
         if (ep !== renderEpoch) return;
-        var buf = await fetch(url).arrayBuffer();  // blob URL → ArrayBuffer（缓存命中为本地内存 fetch）
+        var buf = await (await fetch(url)).arrayBuffer();  // blob URL → ArrayBuffer（缓存命中为本地内存 fetch）
         if (ep !== renderEpoch) return;
         var face = new FontFace("MpPreviewFont", buf);  // ArrayBuffer 源 → 不经 font-src
         await face.load();
@@ -375,6 +375,7 @@
     async function ensurePdfjs() {
         if (_libCache.pdfjs) return _libCache.pdfjs;
         var wresp = await fetch(SERVER_BASE + "/lib/pdf.worker.min.mjs?token=" + encodeURIComponent(TOKEN));
+        if (!wresp.ok) throw new Error("load pdf.worker failed: " + wresp.status);  // 复审 revContract：403/404 时错误体('forbidden token')勿喂 Worker
         var wcode = await wresp.text();
         var workerUrl = URL.createObjectURL(new Blob([wcode], { type: "text/javascript" }));  // blob worker（不 revoke）
         var pdfjsLib = await loadLibBlob("pdfjs", "pdf.min.mjs");
@@ -386,7 +387,7 @@
         if (ep !== renderEpoch) return;
         var url = await fetchCached(filePath, "pdf", fetcherFor(filePath, "pdf"));
         if (ep !== renderEpoch) return;
-        var ab = await fetch(url).arrayBuffer();
+        var ab = await (await fetch(url)).arrayBuffer();
         if (ep !== renderEpoch) return;
         var pdf = await lib.getDocument({ data: ab }).promise;
         if (ep !== renderEpoch) { try { pdf.destroy(); } catch (e) {} return; }  // stale → 销毁防 worker 泄漏
@@ -414,30 +415,32 @@
         // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
         var object;
         if (ext === "glb" || ext === "gltf") {
-            var ab = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            var ab = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
             var gltf = await new T.GLTFLoader().parseAsync(ab, ""); if (ep !== renderEpoch) return;
             object = gltf.scene;
         } else if (ext === "stl") {
-            var abS = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            var abS = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
             var geo = new T.STLLoader().parse(abS); if (ep !== renderEpoch) return;
             if (!geo.attributes.normal) geo.computeVertexNormals();  // STL 无法线则算（MeshStandardMaterial 需法线着色）
             object = new T.Mesh(geo, new T.MeshStandardMaterial({ color: 0x88aacc, metalness: 0.1, roughness: 0.75 }));
         } else if (ext === "obj") {
-            var text = await fetch(url).text(); if (ep !== renderEpoch) return;  // OBJ 是 ASCII 文本格式（非 arrayBuffer）
+            var text = await (await fetch(url)).text(); if (ep !== renderEpoch) return;  // OBJ 是 ASCII 文本格式（非 arrayBuffer）
             object = new T.OBJLoader().parse(text); if (ep !== renderEpoch) return;
         } else if (ext === "fbx") {
-            var abF = await fetch(url).arrayBuffer(); if (ep !== renderEpoch) return;
+            var abF = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
             object = new T.FBXLoader().parse(abF, ""); if (ep !== renderEpoch) return;
         } else { if (ep === renderEpoch) showPopupError("不支持的 3D 格式：" + ext); return; }
         if (ep !== renderEpoch) return;
         // 归一化：stl/obj/fbx 原始几何常不在原点/尺寸悬殊 → 居中 + 缩放到 ~3 单位，相机 z=5 看全
         var box = new T.Box3().setFromObject(object);
-        var center = box.getCenter(new T.Vector3());
-        var size = box.getSize(new T.Vector3());
-        var maxDim = Math.max(size.x, size.y, size.z, 0.001);
-        var scl = 3 / maxDim;
-        object.position.copy(center).multiplyScalar(-scl);  // p = -scl*center → 缩放后 box 中心落原点
-        object.scale.setScalar(scl);
+        if (!box.isEmpty()) {  // 复审 revArch：退化/空几何(0 三角形 STL/空 GLB)→ box 空 → center=NaN → position/scale 灾难；空则跳过归一化原样显示
+            var center = box.getCenter(new T.Vector3());
+            var size = box.getSize(new T.Vector3());
+            var maxDim = Math.max(size.x, size.y, size.z, 0.001);
+            var scl = 3 / maxDim;
+            object.position.copy(center).multiplyScalar(-scl);  // p = -scl*center → 缩放后 box 中心落原点
+            object.scale.setScalar(scl);
+        }
         if (ep !== renderEpoch) return;
         var content = document.querySelector(".mp-content");
         var canvas = document.createElement("canvas");

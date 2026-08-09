@@ -119,7 +119,7 @@ function serveImage(file: string, res: http.ServerResponse) {
     fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(500); res.end("read error"); return; }
         const ext = path.extname(file).slice(1);
-        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext);  // 复审 rev1：svg 须 image/svg+xml（image/svg 非标，data URL 不渲染）
+        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext === "ico" ? "x-icon" : ext);  // 复审：svg→svg+xml / ico→x-icon（非标直拼 Chromium 靠嗅探,显式映射确定性）
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });
