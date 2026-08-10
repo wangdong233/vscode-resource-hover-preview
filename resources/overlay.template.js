@@ -34,7 +34,7 @@
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
-    var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v", "flv"];  // 0.5: +flv(flv.js transmux)
+    var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v", "flv"];  // 0.5: +flv(ffmpeg transcode)
     var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus", "aiff"];  // 0.5: +aiff(ffmpeg 转码)
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
     var MODEL3D_EXTS = ["glb", "gltf", "stl", "obj", "fbx"];  // 0.4.3：恢复 stl/obj/fbx（entry-three 加 STLLoader/OBJLoader/FBXLoader，render3D 按格式分发）
@@ -71,7 +71,7 @@
             for (var entry of _cache) { if (!entry[1].pinned && (!oldest || entry[1].ts < oldest.ts)) { oldest = entry[1]; oldestKey = entry[0]; } }
             if (!oldestKey) break;
             _cache.delete(oldestKey); _cacheBytes -= oldest.bytes;
-            if (typeof oldest.data === "string") { try { URL.revokeObjectURL(oldest.data); } catch (e) {} }  // 仅 revoke 字符串 URL(blob/data);arrayBuffer 直接 GC
+            // GC handles arrayBuffer/data-URL (no createObjectURL in codebase)
         }
     }
     // fetchCached：命中返缓存 data；未命中跑 fetcher（_inflight dedup 并发）→ cachePut → 返 data
@@ -213,10 +213,10 @@
         else if (cx >= vw / 2 && cy < vh / 2) { x = itemRect.left - GAP - w; y = itemRect.bottom + GAP; } // 右上 → 左下
         else if (cx < vw / 2 && cy >= vh / 2) { x = itemRect.right + GAP; y = itemRect.top - GAP - h; }   // 左下 → 右上
         else { x = itemRect.left - GAP - w; y = itemRect.top - GAP - h; }                                  // 右下 → 左上
-        x = Math.max(8, Math.min(x, vw - w - 8)); y = Math.max(8, Math.min(y, vh - h - 8));
+        x = Math.max(8, Math.min(x, vw - w - 8)); y = Math.max(28, Math.min(y, vh - h - 8));
         popup.style.left = x + "px"; popup.style.top = y + "px";
         // rail 朝向：popup 在文件项右侧 → rail 朝右（远离项）；popup 在项左侧 → rail 朝左（防压文件行）
-        popup.classList.toggle("rail-left", x < itemRect.left);
+        popup.classList.toggle("rail-left", x < itemRect.left || (x + popup.offsetWidth) > window.innerWidth - 50);
     }
 
     // ===== 四角缩放（对角固定）+ pin + close =====
@@ -409,8 +409,7 @@
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
             var vext = (filePath.split(".").pop() || "").toLowerCase();
-            var webSafe = ["mp4", "webm", "ogg", "mov", "m4v", "mkv"];  // 0.5: +mkv(Chromium 原生解 Matroska 容器,H.264-inside 可播)
-            if (webSafe.indexOf(vext) < 0) showPopupError("." + vext + " 格式不支持浏览器预览（Chromium 仅原生解码 MP4/WebM，" + vext.toUpperCase() + " 需转码或外部播放器）");
+            if (NATIVE_VIDEO.indexOf(vext) < 0) showPopupError("." + vext + " 格式不支持浏览器预览（Chromium 仅原生解码 MP4/WebM，" + vext.toUpperCase() + " 需转码或外部播放器）");
             else showPopupError("video 加载失败");
         });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
@@ -426,9 +425,16 @@
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
         audio.src = mediaUrl(filePath, "audio");
-        audio.controls = true; audio.autoplay = true; audio.style.width = "100%";
+        audio.controls = true; audio.style.width = "100%";
         content.replaceChildren(audio);
-        audio.addEventListener("canplay", function () { audio.play().catch(function () {}); });  // 0.5.1: canplay 后再 play（src 刚赋值时未 loaded → play 被拒）
+        audio.addEventListener("canplay", function () {
+            audio.play().catch(function () {
+                if (ep !== renderEpoch) return;
+                var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "font-size:18px;padding:8px;cursor:pointer";
+                btn.addEventListener("click", function () { audio.play(); btn.remove(); });
+                content.appendChild(btn);
+            });
+        });
         // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
         var popup = document.getElementById("mp-popup");
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
@@ -527,7 +533,7 @@
     async function render3D(filePath, ep, rect) {
         var T = await waitForThree();
         if (ep !== renderEpoch) return;
-        fitPopupToContent(600, 450, rect);  // 0.5.1: 3D 用 600×450（默认 400×300 太小）
+        var p3d = document.getElementById("mp-popup"); if (p3d) { p3d.style.width = "600px"; p3d.style.height = "450px"; p3d.style.minHeight = ""; if (rect) placePopup(rect); }
         var ext = (filePath.split(".").pop() || "").toLowerCase();
         // 0.4.8 大文件分档：probe size → ≥5MB 走元信息卡（不 auto-parse 防 UI 冻结），<5MB 自动渲染
         var total = await probeSize(filePath); if (ep !== renderEpoch) return;

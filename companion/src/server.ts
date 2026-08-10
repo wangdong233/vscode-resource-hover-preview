@@ -75,7 +75,7 @@ function serveRename(url: URL, res: http.ServerResponse, roots: string[], onRena
     const oldPath = url.searchParams.get("oldPath");
     const newName = url.searchParams.get("newName");
     if (!oldPath || !newName) return jsonErr(400, "missing params");
-    if (newName.trim() === "" || /[\\/]/.test(newName) || newName === "." || newName === ".." || newName.includes("\0") || newName.length > 255 || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i.test(newName)) {
+    if (newName.trim() === "" || /[\\/]/.test(newName) || newName === "." || newName === ".." || /[\x00-\x1f\x7f]/.test(newName) || newName.includes("\0") || newName.length > 255 || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i.test(newName)) {
         return jsonErr(400, "invalid name");  // 净化：纯空格/路径分隔符/./../null/超长/Windows 保留名
     }
     if (roots.length === 0) return jsonErr(403, "no workspace");  // 🟡 fail-closed：mutation 端点无 workspace 默认拒（防本机进程借 token 改任意文件）
