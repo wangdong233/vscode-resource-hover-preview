@@ -391,7 +391,13 @@
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
         video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) fitPopupToContent(video.videoWidth, video.videoHeight, rect); });  // 0.4.9：贴合视频尺寸
-        video.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("video 加载失败"); });
+        video.addEventListener("error", function () {
+            if (ep !== renderEpoch) return;
+            var vext = (filePath.split(".").pop() || "").toLowerCase();
+            var webSafe = ["mp4", "webm", "ogg", "mov", "m4v"];
+            if (webSafe.indexOf(vext) < 0) showPopupError("." + vext + " 格式不支持浏览器预览（Chromium 仅原生解码 MP4/WebM，" + vext.toUpperCase() + " 需转码或外部播放器）");
+            else showPopupError("video 加载失败");
+        });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
             if (ep !== renderEpoch) return;  // 复审：content 已被新 hover 替换则不叠杂散按钮
             var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "font-size:24px;padding:12px;cursor:pointer";
@@ -405,8 +411,9 @@
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
         audio.src = previewUrl(filePath, "audio");
-        audio.controls = true; audio.style.width = "100%";
+        audio.controls = true; audio.autoplay = true; audio.style.width = "100%";
         content.replaceChildren(audio);
+        audio.play().catch(function () {});  // 0.4.13: 自动播放(被拦则用户点 controls 手动放)
         // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
         var popup = document.getElementById("mp-popup");
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
