@@ -148,8 +148,7 @@
             "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){#mp-popup{background:var(--vscode-editorWidget-background,#252526)}}",  // 软件渲染兜底（无 backdrop-filter）
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
-            ".mp-fname{position:absolute;top:6px;left:6px;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);opacity:0;transform:translateY(-4px);transition:opacity 160ms cubic-bezier(.22,1,.36,1),transform 160ms cubic-bezier(.22,1,.36,1);cursor:text}",  // 0.4.9 毛玻璃胶囊 pill（snap agent：glass on glass，非边缘渐变遮图）
-            "#mp-popup:hover .mp-fname{opacity:1;transform:translateY(0)}",
+            ".mp-fname{position:absolute;top:6px;left:6px;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
             ".mp-rail{position:absolute;top:50%;right:0;transform:translate(112%,-50%) scale(.92);display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;border-radius:8px;background:rgba(28,28,32,.6);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.4),0 1px 4px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.06);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.9 整块胶囊容器（Figma UI3 教训：强 border+shadow 浮起，不只靠 backdrop-filter）
             "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,-50%) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap 入场 spring overshoot
             "#mp-popup.rail-left .mp-rail{right:auto;left:0;transform:translate(-12%,-50%) scale(.92)}",
@@ -240,7 +239,8 @@
     function fitPopupToContent(nw, nh, rect) {
         var vw = window.innerWidth, vh = window.innerHeight;
         var w = nw || 400, h = nh || 300;  // SVG 无 natural → 兜底 400×300
-        var scale = Math.min(vw * 0.7 / w, vh * 0.7 / h, 1);  // 不放大超 natural（大图缩放适配视口）
+        var MAX_W = Math.min(vw * 0.4, 560), MAX_H = Math.min(vh * 0.4, 420);  // 0.4.11：按 VSCode 窗口 40% + 硬上限 560×420（原 70% 太大占满屏；保比例按窗口大小非全分辨率）
+        var scale = Math.min(MAX_W / w, MAX_H / h, 1);  // 保图片比例，不放大超 natural
         w = Math.round(w * scale); h = Math.round(h * scale);
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         popup.style.width = Math.max(200, w) + "px";
@@ -323,8 +323,8 @@
         if (!oldFull || !oldName) return;
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         var fname = popup.querySelector(".mp-fname"); if (!fname) return;
-        var wasPinned = isPinned;  // 🔴 03 复审：捕获改名前 pin 态，done() 复位（否则首次改名后永久 pin）
-        if (!wasPinned) { isPinned = true; if (pinBtnEl) pinBtnEl.classList.add("is-pinned"); }  // 编辑期间锁（防 hideTimer 关闭丢输入）
+        // 0.4.11：不再 isPinned 锁（用户要求：鼠标离开浮窗应直接关闭）。编辑期间鼠标在 popup 内无 mouseleave → 不关；
+        //   鼠标离开 popup → input blur(done 提交) + mouseleave(hideTimer 关) = 提交并关闭，符合"鼠标离开输入框生效 + 离开浮窗关闭"。
         editing = true;
         var input = document.createElement("input");
         input.type = "text"; input.value = oldName;
@@ -332,7 +332,6 @@
         fname.replaceWith(input); input.focus(); input.select();
         var done = function (commit) {
             if (!editing) return; editing = false; activeRenameDone = null;  // 🔵 复审：清 closeBtn 取消钩
-            if (!wasPinned) { isPinned = false; if (pinBtnEl) pinBtnEl.classList.remove("is-pinned"); }  // 🔴 复审：复位改名前 pin 态（不偷用户已设的 pin）
             var nn = input.value.trim();
             input.replaceWith(fname);
             if (commit && nn && nn !== oldName) {
