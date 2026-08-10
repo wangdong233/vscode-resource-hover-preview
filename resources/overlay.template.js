@@ -108,6 +108,22 @@
     function pinCurrent(p, t) { if (_curPin) cacheUnpin(_curPin.p, _curPin.t); cachePin(p, t); _curPin = { p: p, t: t }; }
     function unpinCurrent() { if (_curPin) { cacheUnpin(_curPin.p, _curPin.t); _curPin = null; } }
 
+    // ===== SVG 矢量图标（createElementNS，TT 合规；currentColor 随按钮色）=====
+    function mkIcon(d) {
+        var ns = "http://www.w3.org/2000/svg";
+        var svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("viewBox", "0 0 16 16");
+        svg.setAttribute("width", "15"); svg.setAttribute("height", "15");
+        svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.6"); svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+        var p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.appendChild(p);
+        return svg;
+    }
+    // 图标 path（16×16）：pin=圆圈(.is-pinned 时 CSS 填充)、reset=四角展开、close=X
+    var ICON_PIN = "M11.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z";
+    var ICON_RESET = "M3 6.5V3.5A.5.5 0 0 1 3.5 3H6.5 M9.5 3h3a.5.5 0 0 1 .5.5V6.5 M13 9.5v3a.5.5 0 0 1-.5.5H9.5 M6.5 13h-3a.5.5 0 0 1-.5-.5V9.5";
+    var ICON_CLOSE = "M4 4l8 8M12 4l-8 8";
+
     // ===== popup 骨架（createElement，doc03）=====
     function ensurePopup() {
         var popup = document.getElementById("mp-popup");
@@ -116,12 +132,12 @@
         popup.id = "mp-popup";
         var fname = document.createElement("span"); fname.className = "mp-fname"; fname.title = "点击重命名";  // 文件名悬浮左上（0.4.9 毛玻璃胶囊 + 点击改名）
         fname.addEventListener("click", startRename);
-        // 右侧竖向 rail（pin/reset/close；popup DOM 子元素 → 保 :hover/mouseleave 协同）
+        // 工具盘（右下角右侧边外部吸附；pin/reset/close SVG 图标 + divider 分组；popup DOM 子元素保 :hover/mouseleave 协同）
         var rail = document.createElement("div"); rail.className = "mp-rail";
-        var pinBtn = document.createElement("button"); pinBtn.className = "mp-pin"; pinBtn.textContent = "📌"; pinBtn.title = "固定（锁定当前内容，忽略新 hover）";
-        var resetBtn = document.createElement("button"); resetBtn.className = "mp-reset"; resetBtn.textContent = "⤢"; resetBtn.title = "恢复默认大小";
-        var closeBtn = document.createElement("button"); closeBtn.className = "mp-close"; closeBtn.textContent = "✕"; closeBtn.title = "关闭";
-        var divider = document.createElement("div"); divider.className = "mp-divider";  // 0.4.9 分组分割（锁定 | 窗口操作）
+        var pinBtn = document.createElement("button"); pinBtn.className = "mp-pin"; pinBtn.title = "固定（锁定当前内容，忽略新 hover）"; pinBtn.appendChild(mkIcon(ICON_PIN));
+        var resetBtn = document.createElement("button"); resetBtn.className = "mp-reset"; resetBtn.title = "恢复默认大小"; resetBtn.appendChild(mkIcon(ICON_RESET));
+        var closeBtn = document.createElement("button"); closeBtn.className = "mp-close"; closeBtn.title = "关闭"; closeBtn.appendChild(mkIcon(ICON_CLOSE));
+        var divider = document.createElement("div"); divider.className = "mp-divider";  // 分组分割（锁定 | 窗口操作）
         rail.append(pinBtn, divider, resetBtn, closeBtn);
         var content = document.createElement("div"); content.className = "mp-content";
         var corners = ["nw", "ne", "sw", "se"];
@@ -149,16 +165,17 @@
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
             ".mp-fname{position:absolute;top:6px;left:6px;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
-            ".mp-rail{position:absolute;top:50%;right:0;transform:translate(112%,-50%) scale(.92);display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;border-radius:8px;background:rgba(28,28,32,.6);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.4),0 1px 4px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.06);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.9 整块胶囊容器（Figma UI3 教训：强 border+shadow 浮起，不只靠 backdrop-filter）
-            "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,-50%) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap 入场 spring overshoot
-            "#mp-popup.rail-left .mp-rail{right:auto;left:0;transform:translate(-12%,-50%) scale(.92)}",
-            "#mp-popup.rail-left:hover .mp-rail{transform:translate(-100%,-50%) scale(1)}",
-            ".mp-rail button{width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.78);cursor:pointer;padding:0;font-size:14px;line-height:1;border-radius:5px;transition:background-color 100ms ease-out,color 100ms ease-out,transform 100ms cubic-bezier(.34,1.56,.64,1)}",  // 等比例 26×26 图标
-            ".mp-rail button:hover{background:rgba(255,255,255,.12);color:#fff;transform:scale(1.08)}",
-            ".mp-rail button:active{transform:scale(.94)}",
+            ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.62);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
+            "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,0) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap spring 入场
+            "#mp-popup.rail-left .mp-rail{top:6px;right:auto;left:0;transform:translate(-12%,0) scale(.92)}",
+            "#mp-popup.rail-left:hover .mp-rail{transform:translate(-100%,0) scale(1)}",
+            ".mp-rail button{width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:0;border-radius:6px;transition:background-color 100ms ease-out,color 100ms ease-out,transform 100ms cubic-bezier(.34,1.56,.64,1)}",  // 28×28 等比例触控区，SVG 矢量图标（currentColor）
+            ".mp-rail button:hover{background:rgba(255,255,255,.13);color:#fff;transform:scale(1.1)}",
+            ".mp-rail button:active{transform:scale(.92)}",
             ".mp-rail button.is-pinned{color:#4ec9b0}",  // pin 高亮
-            ".mp-rail .mp-divider{width:16px;height:1px;background:rgba(255,255,255,.12);margin:1px 0;border:none}",  // 短横线分组分割
-            "@media (prefers-reduced-motion:reduce){.mp-fname,.mp-rail,.mp-rail button{transition-duration:.01ms!important}.mp-fname{transform:translateY(0)!important}.mp-rail{transform:translate(100%,-50%) scale(1)!important}#mp-popup.rail-left .mp-rail{transform:translate(-100%,-50%) scale(1)!important}}",  // reduced-motion 兜底（0.01ms 非 0 保 transitionend + transform 覆盖终态）
+            ".mp-rail button.is-pinned svg{fill:currentColor}",  // pin 圆圈填充（锁定态视觉反馈）
+            ".mp-rail .mp-divider{width:18px;height:1px;background:rgba(255,255,255,.13);margin:2px 0;border:none}",  // 分组短横线
+            "@media (prefers-reduced-motion:reduce){.mp-rail,.mp-rail button{transition-duration:.01ms!important}.mp-rail{transform:translate(100%,0) scale(1)!important}#mp-popup.rail-left .mp-rail{transform:translate(-100%,0) scale(1)!important}}",  // reduced-motion 兜底（0.01ms 非 0 保 transitionend + transform 覆盖终态）
             ".mp-resize{position:absolute;width:14px;height:14px;z-index:3;opacity:0;transition:opacity .15s}",
             "#mp-popup:hover .mp-resize{opacity:.4}",
             ".mp-resize:hover{opacity:1}",
