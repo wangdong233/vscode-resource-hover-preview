@@ -22,7 +22,7 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
 
 // ffmpeg 探测（档3：非 web 格式实时转码 AVI→MP4 / AIFF→WAV）
 function checkFfmpeg(): boolean {
-    try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch { return false; }
+    for (const bin of ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"]) { try { execFileSync(bin, ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch (e) {} } return false;
 }
 const HAS_FFMPEG = checkFfmpeg();  // 模块加载时探测一次（用户要求：启动时检查环境，不存在则不支持该格式）
 

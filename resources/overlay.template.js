@@ -179,7 +179,7 @@
             "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){#mp-popup{background:var(--vscode-editorWidget-background,#252526)}}",  // 软件渲染兜底（无 backdrop-filter）
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
-            ".mp-fname{position:absolute;top:6px;left:6px;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
+            ".mp-fname{position:absolute;top:-24px;left:0;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
             ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.62);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
             "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,0) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap spring 入场
             "#mp-popup.rail-left .mp-rail{top:6px;right:auto;left:0;transform:translate(-12%,0) scale(.92)}",
@@ -271,7 +271,7 @@
     function fitPopupToContent(nw, nh, rect) {
         var vw = window.innerWidth, vh = window.innerHeight;
         var w = nw || 400, h = nh || 300;  // SVG 无 natural → 兜底 400×300
-        var MAX_W = Math.min(vw * 0.4, 560), MAX_H = Math.min(vh * 0.4, 420);  // 0.4.11：按 VSCode 窗口 40% + 硬上限 560×420（原 70% 太大占满屏；保比例按窗口大小非全分辨率）
+        var MAX_W = Math.min(vw * 0.35, 450), MAX_H = Math.min(vh * 0.35, 340);  // 0.4.11：按 VSCode 窗口 40% + 硬上限 560×420（原 70% 太大占满屏；保比例按窗口大小非全分辨率）
         var scale = Math.min(MAX_W / w, MAX_H / h, 1);  // 保图片比例，不放大超 natural
         w = Math.round(w * scale); h = Math.round(h * scale);
         var popup = document.getElementById("mp-popup"); if (!popup) return;
@@ -428,7 +428,7 @@
         audio.src = mediaUrl(filePath, "audio");
         audio.controls = true; audio.autoplay = true; audio.style.width = "100%";
         content.replaceChildren(audio);
-        audio.play().catch(function () {});  // 0.4.13: 自动播放(被拦则用户点 controls 手动放)
+        audio.addEventListener("canplay", function () { audio.play().catch(function () {}); });  // 0.5.1: canplay 后再 play（src 刚赋值时未 loaded → play 被拒）
         // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
         var popup = document.getElementById("mp-popup");
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
@@ -524,9 +524,10 @@
         card.appendChild(btn);
         content.appendChild(card);
     }
-    async function render3D(filePath, ep) {
-        var T = await waitForThree();  // three.js 由 static defer script 加载，等就绪（通常已加载完）
+    async function render3D(filePath, ep, rect) {
+        var T = await waitForThree();
         if (ep !== renderEpoch) return;
+        fitPopupToContent(600, 450, rect);  // 0.5.1: 3D 用 600×450（默认 400×300 太小）
         var ext = (filePath.split(".").pop() || "").toLowerCase();
         // 0.4.8 大文件分档：probe size → ≥5MB 走元信息卡（不 auto-parse 防 UI 冻结），<5MB 自动渲染
         var total = await probeSize(filePath); if (ep !== renderEpoch) return;
@@ -537,9 +538,9 @@
             showBigModelCard(filePath, ext, meta, total, T);
             return;
         }
-        await render3DFull(filePath, ep, ext, T);
+        await render3DFull(filePath, ep, ext, T, rect);
     }
-    async function render3DFull(filePath, ep, ext, T) {
+    async function render3DFull(filePath, ep, ext, T, rect) {
         var ab = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));  // ab=arrayBuffer（0.4.7：缓存直存 ab，免 blob/fetch(blobUrl) 被 connect-src 拦）
         if (ep !== renderEpoch) return;
         // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
@@ -648,7 +649,7 @@
         else if (type === "video") renderVideo(fullPath, ep, rect);
         else if (type === "audio") renderAudio(fullPath, ep, rect);
         else if (type === "font") renderFont(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
-        else if (type === "3d") render3D(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
+        else if (type === "3d") render3D(fullPath, ep, rect).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         schedulePrefetch(rowEl);  // Wave3 a：预取 ±2 邻行填缓存（消除移动间隔）
     }
 
