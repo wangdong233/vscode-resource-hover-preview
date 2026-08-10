@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.16.0"; // bump 触发 re-patch：bug1(capture)+bug2/3(tildify ~)+bug4(includes)+vsix残留修
+export const INJECT_VERSION = "v0.17.0"; // bump 触发 re-patch：bug1(capture)+bug2/3(tildify ~)+bug4(includes)+vsix残留修
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;

@@ -21,9 +21,9 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }
 
-export function startPreviewServer(token: string, roots: string[] = []): PreviewServer {
+export function startPreviewServer(token: string, roots: string[] = [], onRenamed?: (newPath: string) => void): PreviewServer {
     const port = findPort(BASE_PORT);
-    const server = http.createServer((req, res) => handle(req, res, token, roots));
+    const server = http.createServer((req, res) => handle(req, res, token, roots, onRenamed));
     server.on("error", (e: NodeJS.ErrnoException) => {  // v0.1审查🟡修：防 EADDRINUSE 崩 EH
         if (e.code === "EADDRINUSE") console.error(`[mp] port ${port} occupied`);
         else throw e;
@@ -38,7 +38,7 @@ function findPort(base: number): number {
     return base;
 }
 
-function handle(req: http.IncomingMessage, res: http.ServerResponse, token: string, roots: string[]) {
+function handle(req: http.IncomingMessage, res: http.ServerResponse, token: string, roots: string[], onRenamed?: (newPath: string) => void) {
     // 闸门1：Host header（防 DNS rebinding）
     const host = req.headers.host || "";
     if (!ALLOWED_HOST.test(host)) { res.writeHead(403); res.end("forbidden host"); return; }
@@ -56,7 +56,36 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     //   version/mime/types 字段运行时全死）。TYPE_TABLE 保留（serveStream/serveImage 消费 + test-contract-sync 闸门）。
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
+    if (url.pathname === "/rename") return serveRename(url, res, roots, onRenamed);  // 0.4.9 文件改名（overlay 文件名点击触发）
     res.writeHead(404); res.end("not found");
+}
+
+// 0.4.9 /rename：同目录改名（fs.rename）。闸门：token(已过) + newName 净化(禁路径分隔符/.。/\0) + realpath + 双路径 workspace containment。
+function serveRename(url: URL, res: http.ServerResponse, roots: string[], onRenamed?: (newPath: string) => void) {
+    const oldPath = url.searchParams.get("oldPath");
+    const newName = url.searchParams.get("newName");
+    if (!oldPath || !newName) { res.writeHead(400); res.end("missing params"); return; }
+    if (/[\\/]/.test(newName) || newName === "." || newName === ".." || newName.includes("\0") || newName.length > 255) {
+        res.writeHead(400); res.end("invalid name"); return;  // 净化：纯文件名，禁路径分隔符/目录穿越/null/超长
+    }
+    let oldReal = oldPath.startsWith("~") ? oldPath.replace(/^~/, os.homedir()) : oldPath;
+    try { oldReal = fs.realpathSync(path.resolve(oldReal)); } catch { res.writeHead(404); res.end("not found"); return; }
+    const newPath = path.join(path.dirname(oldReal), newName);  // 同目录 + 纯文件名（newName 已净化）
+    if (roots.length > 0) {  // 双路径 containment（old + new 都须在 workspace 内，双保险）
+        const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
+        const inside = (p: string) => realRoots.some(r => p === r || p.startsWith(r + path.sep));
+        if (!inside(oldReal) || !inside(newPath)) { res.writeHead(403); res.end("outside workspace"); return; }
+    }
+    fs.rename(oldReal, newPath, err => {
+        if (err) {
+            const code = err.code || "";
+            res.writeHead(code === "ENOENT" ? 404 : code === "EEXIST" || code === "ENOTEMPTY" ? 409 : 500);
+            res.end(code || "rename error"); return;
+        }
+        if (typeof onRenamed === "function") { try { onRenamed(newPath); } catch (e) { /* ignore */ } }  // EH 触发 Explorer 刷新
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, newPath }));
+    });
 }
 
 function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {

@@ -13,6 +13,7 @@
     var HOVER_DELAY = 300, HIDE_DELAY = 200;
     var SIZE_KEY = "mp.popupSize";
     var isPinned = false;
+    var pinBtnEl = null;  // 0.4.9 供 startRename 改 is-pinned（直接持引用,免按 class 查——pin 按钮由 .mp-rail button 泛化样式,无独立 CSS 规则）
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var renderEpoch = 0;  // 渲染代际（防异步竞态 A 的 promise 覆盖 B，审查 3.6）
@@ -113,13 +114,15 @@
         if (popup) return popup;
         popup = document.createElement("div");
         popup.id = "mp-popup";
-        var fname = document.createElement("span"); fname.className = "mp-fname";  // 文件名悬浮 content 左上（无 toolbar 占位）
+        var fname = document.createElement("span"); fname.className = "mp-fname"; fname.title = "点击重命名";  // 文件名悬浮左上（0.4.9 毛玻璃胶囊 + 点击改名）
+        fname.addEventListener("click", startRename);
         // 右侧竖向 rail（pin/reset/close；popup DOM 子元素 → 保 :hover/mouseleave 协同）
         var rail = document.createElement("div"); rail.className = "mp-rail";
         var pinBtn = document.createElement("button"); pinBtn.className = "mp-pin"; pinBtn.textContent = "📌"; pinBtn.title = "固定（锁定当前内容，忽略新 hover）";
         var resetBtn = document.createElement("button"); resetBtn.className = "mp-reset"; resetBtn.textContent = "⤢"; resetBtn.title = "恢复默认大小";
         var closeBtn = document.createElement("button"); closeBtn.className = "mp-close"; closeBtn.textContent = "✕"; closeBtn.title = "关闭";
-        rail.append(pinBtn, resetBtn, closeBtn);
+        var divider = document.createElement("div"); divider.className = "mp-divider";  // 0.4.9 分组分割（锁定 | 窗口操作）
+        rail.append(pinBtn, divider, resetBtn, closeBtn);
         var content = document.createElement("div"); content.className = "mp-content";
         var corners = ["nw", "ne", "sw", "se"];
         var handles = corners.map(function (c) {
@@ -130,6 +133,7 @@
         injectPopupCss();
         document.body.appendChild(popup);
         bindInteractions(popup, pinBtn, closeBtn, resetBtn);
+        pinBtnEl = pinBtn;  // 0.4.9 供 startRename（非 querySelector）
         loadPopupSize(popup);
         return popup;
     }
@@ -144,14 +148,18 @@
             "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){#mp-popup{background:var(--vscode-editorWidget-background,#252526)}}",  // 软件渲染兜底（无 backdrop-filter）
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
-            ".mp-fname{position:absolute;top:6px;left:8px;z-index:2;font-size:11px;color:var(--vscode-descriptionForeground,rgba(255,255,255,.75));background:rgba(0,0,0,.4);padding:1px 6px;border-radius:3px;pointer-events:none;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0;transition:opacity .15s}",
-            "#mp-popup:hover .mp-fname{opacity:1}",
-            ".mp-rail{position:absolute;top:50%;right:0;transform:translate(100%,-50%);display:flex;flex-direction:column;gap:3px;opacity:0;transition:opacity .15s}",  // 溢出右侧垂直居中
-            "#mp-popup:hover .mp-rail{opacity:1}",
-            "#mp-popup.rail-left .mp-rail{right:auto;left:0;transform:translate(-100%,-50%)}",  // 朝左（popup 在文件项左侧时，rail 朝左不压文件行）
-            ".mp-rail button{background:var(--vscode-editorWidget-background,#252526);border:none;color:var(--vscode-foreground,#ccc);cursor:pointer;padding:5px 7px;font-size:14px;line-height:1;border-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.4)}",
-            ".mp-rail button:hover{background:var(--vscode-toolbar-hoverBackground,rgba(127,127,127,.3))}",
+            ".mp-fname{position:absolute;top:6px;left:6px;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);opacity:0;transform:translateY(-4px);transition:opacity 160ms cubic-bezier(.22,1,.36,1),transform 160ms cubic-bezier(.22,1,.36,1);cursor:text}",  // 0.4.9 毛玻璃胶囊 pill（snap agent：glass on glass，非边缘渐变遮图）
+            "#mp-popup:hover .mp-fname{opacity:1;transform:translateY(0)}",
+            ".mp-rail{position:absolute;top:50%;right:0;transform:translate(112%,-50%) scale(.92);display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;border-radius:8px;background:rgba(28,28,32,.6);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 4px 16px rgba(0,0,0,.4),0 1px 4px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.06);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.9 整块胶囊容器（Figma UI3 教训：强 border+shadow 浮起，不只靠 backdrop-filter）
+            "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,-50%) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap 入场 spring overshoot
+            "#mp-popup.rail-left .mp-rail{right:auto;left:0;transform:translate(-12%,-50%) scale(.92)}",
+            "#mp-popup.rail-left:hover .mp-rail{transform:translate(-100%,-50%) scale(1)}",
+            ".mp-rail button{width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.78);cursor:pointer;padding:0;font-size:14px;line-height:1;border-radius:5px;transition:background-color 100ms ease-out,color 100ms ease-out,transform 100ms cubic-bezier(.34,1.56,.64,1)}",  // 等比例 26×26 图标
+            ".mp-rail button:hover{background:rgba(255,255,255,.12);color:#fff;transform:scale(1.08)}",
+            ".mp-rail button:active{transform:scale(.94)}",
             ".mp-rail button.is-pinned{color:#4ec9b0}",  // pin 高亮
+            ".mp-rail .mp-divider{width:16px;height:1px;background:rgba(255,255,255,.12);margin:1px 0;border:none}",  // 短横线分组分割
+            "@media (prefers-reduced-motion:reduce){.mp-fname,.mp-rail,.mp-rail button{transition-duration:.01ms!important}.mp-fname{transform:translateY(0)!important}.mp-rail{transform:translate(100%,-50%) scale(1)!important}#mp-popup.rail-left .mp-rail{transform:translate(-100%,-50%) scale(1)!important}}",  // reduced-motion 兜底（0.01ms 非 0 保 transitionend + transform 覆盖终态）
             ".mp-resize{position:absolute;width:14px;height:14px;z-index:3;opacity:0;transition:opacity .15s}",
             "#mp-popup:hover .mp-resize{opacity:.4}",
             ".mp-resize:hover{opacity:1}",
@@ -183,11 +191,12 @@
     // ===== 四角缩放（对角固定）+ pin + close =====
     function bindInteractions(popup, pinBtn, closeBtn, resetBtn) {
         popup.querySelectorAll(".mp-resize").forEach(function (handle) {
-            handle.addEventListener("mousedown", function (e) {
+            handle.addEventListener("pointerdown", function (e) {  // 0.4.9：pointer 事件 + setPointerCapture 修"快拖出浮窗/窗口卡住"（原 mousedown+document.mouseup 鼠标出 window 时 mouseup 丢失致 drag 残留）
                 e.preventDefault(); e.stopPropagation();
+                try { handle.setPointerCapture(e.pointerId); } catch (err) {}  // 捕获 → 指针出 window 也收 pointermove/up
                 var corner = handle.dataset.corner;
                 var startX = e.clientX, startY = e.clientY, r = popup.getBoundingClientRect();
-                // rAF 节流：每帧最多设一次 style（60fps），避免高频 mousemove reflow 卡顿
+                // rAF 节流：每帧最多设一次 style（60fps），避免高频 pointermove reflow 卡顿
                 var lastEv = e, rafId = null;
                 var applyResize = function () {
                     rafId = null;
@@ -201,13 +210,14 @@
                     popup.style.left = left + "px"; popup.style.top = top + "px";
                 };
                 var onMove = function (ev) { lastEv = ev; if (!rafId) rafId = requestAnimationFrame(applyResize); };
-                var onUp = function () {
-                    document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+                var onUp = function (ev) {
+                    handle.removeEventListener("pointermove", onMove); handle.removeEventListener("pointerup", onUp);
+                    try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
                     if (rafId) cancelAnimationFrame(rafId);
                     applyResize();  // 最终精确
                     savePopupSize(popup.offsetWidth, popup.offsetHeight);
                 };
-                document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
+                handle.addEventListener("pointermove", onMove); handle.addEventListener("pointerup", onUp);  // 捕获后事件落 handle
             });
         });
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.classList.toggle("is-pinned", isPinned); });  // Wave2：class 高亮替代文本（窄 rail 不撑宽）
@@ -225,6 +235,19 @@
 
     function savePopupSize(w, h) { try { localStorage.setItem(SIZE_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {} }
     function loadPopupSize(popup) { try { var s = JSON.parse(localStorage.getItem(SIZE_KEY) || "{}"); if (s.w && s.h) { popup.style.width = s.w + "px"; popup.style.height = s.h + "px"; } } catch (e) {} }
+    // 0.4.9 图片/视频尺寸适配：popup 贴合内容 intrinsic 尺寸（无 letterbox 黑边），上限 70vw/70vh，地板 200×150。
+    // 保留 object-fit:contain（popup 贴合比例时 no-op 无黑边；手动 resize 变比例时保图不变形）。
+    function fitPopupToContent(nw, nh, rect) {
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var w = nw || 400, h = nh || 300;  // SVG 无 natural → 兜底 400×300
+        var scale = Math.min(vw * 0.7 / w, vh * 0.7 / h, 1);  // 不放大超 natural（大图缩放适配视口）
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        var popup = document.getElementById("mp-popup"); if (!popup) return;
+        popup.style.width = Math.max(200, w) + "px";
+        popup.style.height = Math.max(150, h) + "px";
+        popup.style.minHeight = "";  // 清 audio 折叠的 minHeight（切类型复位）
+        if (rect) placePopup(rect);  // 尺寸变后重定位防越界（用 handleHover 快照 rect）
+    }
 
     function hidePopup() {
         var popup = document.getElementById("mp-popup"); if (!popup) return;
@@ -291,30 +314,64 @@
         return null; // fallback：方案B EH 索引（remote/compressed，v0.1 暂不实现）
     }
 
+    // 0.4.9 文件名点击改名：fname → input → Enter/blur 提交 → fetch /rename（server fs.rename + containment）→ 刷新 Explorer
+    var editing = false;
+    function startRename() {
+        if (editing) return;
+        var item = currentHovered; if (!item) return;
+        var oldFull = getFullPath(item), oldName = getLabelName(item);
+        if (!oldFull || !oldName) return;
+        var popup = document.getElementById("mp-popup"); if (!popup) return;
+        var fname = popup.querySelector(".mp-fname"); if (!fname) return;
+        if (!isPinned) { isPinned = true; if (pinBtnEl) pinBtnEl.classList.add("is-pinned"); }  // 编辑期间锁（防 hideTimer 关闭丢输入）
+        editing = true;
+        var input = document.createElement("input");
+        input.type = "text"; input.value = oldName;
+        input.style.cssText = "font:500 11px/1.4 sans-serif;color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";
+        fname.replaceWith(input); input.focus(); input.select();
+        var done = function (commit) {
+            if (!editing) return; editing = false;
+            var nn = input.value.trim();
+            input.replaceWith(fname);
+            if (commit && nn && nn !== oldName) {
+                fetch(SERVER_BASE + "/rename?token=" + encodeURIComponent(TOKEN) + "&oldPath=" + encodeURIComponent(oldFull) + "&newName=" + encodeURIComponent(nn))
+                    .then(function (r) { return r.json().catch(function () { return {}; }); })
+                    .then(function (d) { if (d && d.ok) fname.textContent = nn; else showPopupError((d && d.error) || "改名失败"); })
+                    .catch(function () { showPopupError("改名网络错误"); });
+            }
+        };
+        input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); done(true); } else if (e.key === "Escape") { done(false); } });
+        input.addEventListener("blur", function () { done(true); });
+    }
+
     // ===== 渲染（doc03 图片，createElement）=====
     function showPopupError(msg) {
         var popup = ensurePopup(); popup.style.display = "flex";
         var content = popup.querySelector(".mp-content"); content.replaceChildren();
         var span = document.createElement("div"); span.textContent = msg; span.style.color = "#f88"; content.appendChild(span);
     }
-    function renderImage(filePath, ep) {
+    function renderImage(filePath, ep, rect) {
         return fetchCached(filePath, "image", fetcherFor(filePath, "image")).then(function (dataUrl) {
             if (ep !== renderEpoch) return;  // stale（已被新 hover 取代，审查 3.6）
-            var content = document.querySelector(".mp-content");
             var img = document.createElement("img");
             img.src = dataUrl; img.alt = filePath;
-            return img.decode().then(function () { if (ep !== renderEpoch) return; content.replaceChildren(img); });  // Wave3 b：decode 预热再 attach
+            return img.decode().then(function () {
+                if (ep !== renderEpoch) return;
+                fitPopupToContent(img.naturalWidth, img.naturalHeight, rect);  // 0.4.9：贴合图片 natural 尺寸无黑边
+                document.querySelector(".mp-content").replaceChildren(img);
+            });
         });
     }
 
     // v0.2 视频：直 HTTP src（浏览器原生 Range seek，非 blob；doc08 §1）
-    function renderVideo(filePath, ep) {
+    function renderVideo(filePath, ep, rect) {
         var content = document.querySelector(".mp-content");
         var video = document.createElement("video");
         video.src = previewUrl(filePath, "video");
         video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
+        video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) fitPopupToContent(video.videoWidth, video.videoHeight, rect); });  // 0.4.9：贴合视频尺寸
         video.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("video 加载失败"); });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
             if (ep !== renderEpoch) return;  // 复审：content 已被新 hover 替换则不叠杂散按钮
@@ -325,12 +382,15 @@
     }
 
     // v0.3 音频：<audio> 直 HTTP src（复用 video/serveStream 路径，波形砍 [11 F2]）
-    function renderAudio(filePath, ep) {
+    function renderAudio(filePath, ep, rect) {
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
         audio.src = previewUrl(filePath, "audio");
         audio.controls = true; audio.style.width = "100%";
         content.replaceChildren(audio);
+        // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
+        var popup = document.getElementById("mp-popup");
+        if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
         audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
     }
 
@@ -543,9 +603,9 @@
         var ep = ++renderEpoch;  // 渲染代际（审查 3.6：异步 render 完成前若已 hover 新项 → 旧 render 作废）
         pinCurrent(fullPath, type);  // Wave3：缓存 pin 当前项（防 prefetch 邻项 LRU 驱逐正在显示的项）
         // 复审：error 路径也守 ep（stale 渲染的 rejection 不覆盖当前 live popup；ep 在 catch 闭包内）
-        if (type === "image") renderImage(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
-        else if (type === "video") renderVideo(fullPath, ep);
-        else if (type === "audio") renderAudio(fullPath, ep);
+        if (type === "image") renderImage(fullPath, ep, rect).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
+        else if (type === "video") renderVideo(fullPath, ep, rect);
+        else if (type === "audio") renderAudio(fullPath, ep, rect);
         else if (type === "font") renderFont(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         else if (type === "3d") render3D(fullPath, ep).catch(function (e) { if (ep === renderEpoch) showPopupError(e.message); });
         schedulePrefetch(rowEl);  // Wave3 a：预取 ±2 邻行填缓存（消除移动间隔）
