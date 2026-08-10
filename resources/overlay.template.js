@@ -17,6 +17,9 @@
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var renderEpoch = 0;  // 渲染代际（防异步竞态 A 的 promise 覆盖 B，审查 3.6）
+    var hasFfmpeg = false;  // 档3:/ping 缓存——非原生格式(avi/aiff)仅在 ffmpeg 在时弹浮窗,不在则不弹(用户要求不做提醒)
+    var NATIVE_VIDEO = ["mp4", "webm", "ogg", "mov", "m4v", "mkv"];  // Chromium 原生解复用/解码
+    var NATIVE_AUDIO = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     // ===== 预加载缓存（Wave3 b：LRU blob 缓存，image/font/pdf/3d 命中跳 fetch）=====
     var _cache = new Map();       // key=path|type → {url, bytes, ts, pinned}
     var _inflight = new Map();    // key → Promise（dedup 并发预取）
@@ -31,16 +34,22 @@
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
     var IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
-    var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"];
-    var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
+    var VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "avi", "m4v", "flv"];  // 0.5: +flv(flv.js transmux)
+    var AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus", "aiff"];  // 0.5: +aiff(ffmpeg 转码)
     var FONT_EXTS = ["ttf", "otf", "woff", "woff2"];
     var MODEL3D_EXTS = ["glb", "gltf", "stl", "obj", "fbx"];  // 0.4.3：恢复 stl/obj/fbx（entry-three 加 STLLoader/OBJLoader/FBXLoader，render3D 按格式分发）
 
     function detectMediaType(filename) {
         var ext = (filename.split(".").pop() || "").toLowerCase();
         if (IMAGE_EXTS.indexOf(ext) >= 0) return "image";
-        if (VIDEO_EXTS.indexOf(ext) >= 0) return "video";
-        if (AUDIO_EXTS.indexOf(ext) >= 0) return "audio";
+        if (VIDEO_EXTS.indexOf(ext) >= 0) {
+            if (NATIVE_VIDEO.indexOf(ext) >= 0 || hasFfmpeg) return "video";  // 原生或 ffmpeg 可转码 → 弹浮窗
+            return null;  // 非原生(avi/flv) + 无 ffmpeg → 不弹(用户要求不做提醒)
+        }
+        if (AUDIO_EXTS.indexOf(ext) >= 0) {
+            if (NATIVE_AUDIO.indexOf(ext) >= 0 || hasFfmpeg) return "audio";
+            return null;
+        }
         if (FONT_EXTS.indexOf(ext) >= 0) return "font";
         if (MODEL3D_EXTS.indexOf(ext) >= 0) return "3d";
         return null;
@@ -77,6 +86,12 @@
     }
     // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
     function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
+    // 档3:非原生格式走 /transcode(ffmpeg 转码);原生走 /preview
+    function mediaUrl(p, type) {
+        var ext = (p.split(".").pop() || "").toLowerCase();
+        var isNative = (type === "video" && NATIVE_VIDEO.indexOf(ext) >= 0) || (type === "audio" && NATIVE_AUDIO.indexOf(ext) >= 0);
+        return isNative ? previewUrl(p, type) : (SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN));
+    }
     // fetcherFor：类型分派取数据 → {data, bytes}。
     // ★ 0.4.7 根因修：font/pdf/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
     //   毫无意义且引入 connect-src blob: 依赖（workbench connect-src 无 blob: → fetch(blobUrl) 被拦 "Failed to fetch"）。
@@ -386,7 +401,7 @@
     function renderVideo(filePath, ep, rect) {
         var content = document.querySelector(".mp-content");
         var video = document.createElement("video");
-        video.src = previewUrl(filePath, "video");
+        video.src = mediaUrl(filePath, "video");
         video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
@@ -394,7 +409,7 @@
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
             var vext = (filePath.split(".").pop() || "").toLowerCase();
-            var webSafe = ["mp4", "webm", "ogg", "mov", "m4v"];
+            var webSafe = ["mp4", "webm", "ogg", "mov", "m4v", "mkv"];  // 0.5: +mkv(Chromium 原生解 Matroska 容器,H.264-inside 可播)
             if (webSafe.indexOf(vext) < 0) showPopupError("." + vext + " 格式不支持浏览器预览（Chromium 仅原生解码 MP4/WebM，" + vext.toUpperCase() + " 需转码或外部播放器）");
             else showPopupError("video 加载失败");
         });
@@ -410,7 +425,7 @@
     function renderAudio(filePath, ep, rect) {
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
-        audio.src = previewUrl(filePath, "audio");
+        audio.src = mediaUrl(filePath, "audio");
         audio.controls = true; audio.autoplay = true; audio.style.width = "100%";
         content.replaceChildren(audio);
         audio.play().catch(function () {});  // 0.4.13: 自动播放(被拦则用户点 controls 手动放)
@@ -649,5 +664,13 @@
     }
 
     console.log("[mp-overlay] loaded", cfg.version);
-    waitForExplorer(function () { setupHoverListeners(); console.log("[mp-overlay] hover listeners attached"); });
+    waitForExplorer(function () {
+        setupHoverListeners();
+        console.log("[mp-overlay] hover listeners attached");
+        // 档3:探测 ffmpeg（AVI/AIFF 等非原生格式仅在有 ffmpeg 时弹浮窗;无则不弹不做提醒）
+        fetch(SERVER_BASE + "/ping?token=" + encodeURIComponent(TOKEN))
+            .then(function (r) { return r.json(); })
+            .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; if (hasFfmpeg) console.log("[mp-overlay] ffmpeg detected → AVI/AIFF 等非原生格式走转码"); })
+            .catch(function () { /* ignore */ });
+    });
 })();

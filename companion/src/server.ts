@@ -4,6 +4,7 @@ import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { spawn, execFileSync } from "child_process";
 
 const BASE_PORT = 17741;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -13,11 +14,17 @@ const ALLOWED_ORIGIN = /^vscode-file:|^file:/;
 // 媒体类型→mime（serveStream/serveImage 消费；overlay 用本地 *_EXTS 双轨，per-type sync 由 test-contract-sync 闸门保证一致）
 export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     image: { exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"], mime: "image/*" },
-    video: { exts: ["mp4", "webm", "mov", "mkv", "avi", "m4v"], mime: "video/mp4" },
-    audio: { exts: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"], mime: "audio/mpeg" },
+    video: { exts: ["mp4", "webm", "mov", "mkv", "avi", "m4v", "flv"], mime: "video/mp4" },  // 0.5: +flv
+    audio: { exts: ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus", "aiff"], mime: "audio/mpeg" },  // 0.5: +aiff
     font: { exts: ["ttf", "otf", "woff", "woff2"], mime: "font/*" },
     "3d": { exts: ["glb", "gltf", "stl", "obj", "fbx"], mime: "model/gltf-binary" },  // 0.4.3：恢复 stl/obj/fbx；0.4.5：pdf 删除
 };
+
+// ffmpeg 探测（档3：非 web 格式实时转码 AVI→MP4 / AIFF→WAV）
+function checkFfmpeg(): boolean {
+    try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch { return false; }
+}
+const HAS_FFMPEG = checkFfmpeg();  // 模块加载时探测一次（用户要求：启动时检查环境，不存在则不支持该格式）
 
 export interface PreviewServer { server: http.Server; port: number; token: string; }
 
@@ -48,7 +55,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     if (origin) { res.setHeader("Access-Control-Allow-Origin", origin); res.setHeader("Vary", "Origin"); }
 
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (url.pathname === "/ping") { res.writeHead(200); res.end("ok"); return; }
+    if (url.pathname === "/ping") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, hasFfmpeg: HAS_FFMPEG })); return; }  // 档3:返回 ffmpeg 状态供 overlay 判断非 web 格式是否可转码
     // 闸门3：token（除 /ping）。空 token deny-all（v0.1审查🟡修：token='' 时 ''!=='' 为 false 会放行）
     if (!token || url.searchParams.get("token") !== token) { res.writeHead(403); res.end("forbidden token"); return; }
 
@@ -57,6 +64,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
     if (url.pathname === "/rename") return serveRename(url, res, roots, onRenamed);  // 0.4.9 文件改名（overlay 文件名点击触发）
+    if (url.pathname === "/transcode") return serveTranscode(url, req, res, roots);  // 档3:ffmpeg 实时转码（非 web 格式 → MP4/WAV）
     res.writeHead(404); res.end("not found");
 }
 
@@ -111,10 +119,20 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
 }
 
 // range stream（video/audio/3d/font，原生 Range seek，doc04 硬化）
+// MIME 按扩展名（档1 P0：原按 type 一刀切 audio/mpeg→FLAC/OGG/WAV 全错，靠 sniff 偶然工作）
+const MIME_BY_EXT: Record<string, string> = {
+    "mp4": "video/mp4", "webm": "video/webm", "ogg": "video/ogg", "mov": "video/mp4", "m4v": "video/mp4", "mkv": "video/x-matroska",
+    "mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac", "aac": "audio/aac", "m4a": "audio/mp4", "opus": "audio/ogg",
+    "glb": "model/gltf-binary", "gltf": "model/gltf+json", "stl": "model/stl", "obj": "text/plain", "fbx": "application/octet-stream",
+    "ttf": "font/ttf", "otf": "font/otf", "woff": "font/woff", "woff2": "font/woff2", "flv": "video/x-flv",
+};
+function mimeForFile(filePath: string, type: string): string {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    return MIME_BY_EXT[ext] || (type === "video" ? "video/mp4" : type === "audio" ? "audio/mpeg" : "application/octet-stream");
+}
 function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse) {
     const stat = fs.statSync(file);
-    const mimeMap: Record<string, string> = { video: "video/mp4", audio: "audio/mpeg", "3d": "model/gltf-binary", font: "font/ttf" };
-    const mime = mimeMap[type] || "application/octet-stream";
+    const mime = mimeForFile(file, type);
     const range = req.headers.range;
     if (range) {
         const m = /^bytes=(\d+)-(\d*)$/.exec(range);
@@ -149,4 +167,30 @@ function serveImage(file: string, res: http.ServerResponse) {
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });
+}
+
+// 档3 /transcode: ffmpeg 实时转码非 web 格式 → MP4(video)/WAV(audio),流式 pipe
+function serveTranscode(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
+    if (!HAS_FFMPEG) { res.writeHead(404); res.end(JSON.stringify({ ok: false, error: "no ffmpeg" })); return; }
+    let file = url.searchParams.get("file");
+    const type = url.searchParams.get("type");
+    if (!file || !type) { res.writeHead(400); res.end("missing params"); return; }
+    if (file.startsWith("~")) file = file.replace(/^~/, os.homedir());
+    const resolved = path.resolve(file);
+    let realPath: string;
+    try { realPath = fs.realpathSync(resolved); } catch { res.writeHead(404); res.end("not found"); return; }
+    if (roots.length > 0) {
+        const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
+        if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) { res.writeHead(403); res.end("outside workspace"); return; }
+    }
+    const isAudio = type === "audio";
+    // video→fMP4(libx264 ultrafast zerolatency,fragmented MP4 可流式 pipe);audio→WAV(PCM 近零成本)
+    const args = isAudio
+        ? ["-i", realPath, "-f", "wav", "-c:a", "pcm_s16le", "-"]
+        : ["-i", realPath, "-f", "mp4", "-movflags", "frag+emptymoov+default_base_moof", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-c:a", "aac", "-"];
+    res.writeHead(200, { "Content-Type": isAudio ? "audio/wav" : "video/mp4", "Cache-Control": "no-store" });
+    const ffmpeg = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "ignore"] });
+    ffmpeg.stdout.pipe(res);
+    ffmpeg.on("error", () => { try { res.end(); } catch (e) { /* ignore */ } });
+    req.on("close", () => { try { ffmpeg.kill("SIGTERM"); } catch (e) { /* ignore */ } });  // 客户端断开 → 杀 ffmpeg 防僵尸
 }
