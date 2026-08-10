@@ -50,41 +50,44 @@
     var _pinnedKeys = new Set();  // 当前渲染项 key（防 prefetch 邻项 LRU 驱逐正在显示的项，审查 §1.6 项6 多写者协调）
     function cachePin(p, t) { var k = cacheKey(p, t); _pinnedKeys.add(k); var e = _cache.get(k); if (e) e.pinned = true; }
     function cacheUnpin(p, t) { var k = cacheKey(p, t); _pinnedKeys.delete(k); var e = _cache.get(k); if (e) e.pinned = false; }
-    function cacheGet(p, t) { var e = _cache.get(cacheKey(p, t)); if (e) { e.ts = Date.now(); return e.url; } return null; }
-    function cachePut(p, t, url, bytes) {
+    function cacheGet(p, t) { var e = _cache.get(cacheKey(p, t)); if (e) { e.ts = Date.now(); return e.data; } return null; }
+    function cachePut(p, t, data, bytes) {
         var key = cacheKey(p, t);
         if (_cache.has(key)) return;
-        _cache.set(key, { url: url, bytes: bytes, ts: Date.now(), pinned: _pinnedKeys.has(key) });
+        _cache.set(key, { data: data, bytes: bytes, ts: Date.now(), pinned: _pinnedKeys.has(key) });
         _cacheBytes += bytes;
         while ((_cache.size > CACHE_MAX || _cacheBytes > CACHE_BYTES_MAX) && _cache.size > 1) {  // 单驱逐点
             var oldestKey = null, oldest = null;
             for (var entry of _cache) { if (!entry[1].pinned && (!oldest || entry[1].ts < oldest.ts)) { oldest = entry[1]; oldestKey = entry[0]; } }
             if (!oldestKey) break;
             _cache.delete(oldestKey); _cacheBytes -= oldest.bytes;
-            try { URL.revokeObjectURL(oldest.url); } catch (e) {}  // 唯一 revoke 点（data URL revoke 无害）
+            if (typeof oldest.data === "string") { try { URL.revokeObjectURL(oldest.data); } catch (e) {} }  // 仅 revoke 字符串 URL(blob/data);arrayBuffer 直接 GC
         }
     }
-    // fetchCached：命中返缓存 url；未命中跑 fetcher（_inflight dedup 并发）→ cachePut → 返 url
+    // fetchCached：命中返缓存 data；未命中跑 fetcher（_inflight dedup 并发）→ cachePut → 返 data
     function fetchCached(p, t, fetcher) {
         var key = cacheKey(p, t), existing = _cache.get(key);
-        if (existing) { existing.ts = Date.now(); return Promise.resolve(existing.url); }
+        if (existing) { existing.ts = Date.now(); return Promise.resolve(existing.data); }
         if (_inflight.has(key)) return _inflight.get(key);
-        var prom = fetcher().then(function (r) { cachePut(p, t, r.url, r.bytes); _inflight.delete(key); return r.url; })
+        var prom = fetcher().then(function (r) { cachePut(p, t, r.data, r.bytes); _inflight.delete(key); return r.data; })
             .catch(function (e) { _inflight.delete(key); throw e; });
         _inflight.set(key, prom);
         return prom;
     }
     // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
     function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
-    // fetcherFor：类型分派取数据 → {url, bytes}（image=data URL；font/pdf/3d=blob URL）
+    // fetcherFor：类型分派取数据 → {data, bytes}。
+    // ★ 0.4.7 根因修：font/pdf/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
+    //   毫无意义且引入 connect-src blob: 依赖（workbench connect-src 无 blob: → fetch(blobUrl) 被拦 "Failed to fetch"）。
+    //   image 存 data URL 串（img.src 用）；font/3d 存 arrayBuffer（loader 直接吃，免 fetch）。
     function fetcherFor(p, type) {
         var url = previewUrl(p, type);
         if (type === "image") {
             return function () { return fetch(url).then(function (r) { if (!r.ok) throw new Error("server " + r.status); return r.json(); })
-                .then(function (d) { return { url: "data:" + d.mime + ";base64," + d.base64, bytes: d.base64.length }; }); };  // bytes=data URL 实际驻留字节（base64 串长，复审：原 sizeBytes 是原始字节，低估 ~4/3）
+                .then(function (d) { return { data: "data:" + d.mime + ";base64," + d.base64, bytes: d.base64.length }; }); };  // bytes=data URL 实际驻留字节（base64 串长）
         }
         return function () { return fetch(url).then(function (r) { if (!r.ok) throw new Error("server " + r.status); return r.arrayBuffer(); })
-            .then(function (ab) { return { url: URL.createObjectURL(new Blob([ab])), bytes: ab.byteLength }; }); };
+            .then(function (ab) { return { data: ab, bytes: ab.byteLength }; }); };  // 直接存 arrayBuffer（loader 吃 ab，免 blob/fetch）
     }
     // schedulePrefetch（Wave3 a）：hover 某项时预取 ±2 兄弟行填缓存（流式 video/audio 不预取）
     function schedulePrefetch(item) {
@@ -331,11 +334,9 @@
         audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
     }
 
-    // v0.3 字体：FontFace ArrayBuffer 源（免 font-src CSP）+ canvas glyph grid（doc08 §3）。Wave3：走缓存。
+    // v0.3 字体：FontFace ArrayBuffer 源（免 font-src CSP）+ canvas glyph grid（doc08 §3）。走缓存（arrayBuffer 直存）。
     async function renderFont(filePath, ep) {
-        var url = await fetchCached(filePath, "font", fetcherFor(filePath, "font"));
-        if (ep !== renderEpoch) return;
-        var buf = await (await fetch(url)).arrayBuffer();  // blob URL → ArrayBuffer（缓存命中为本地内存 fetch）
+        var buf = await fetchCached(filePath, "font", fetcherFor(filePath, "font"));  // buf=arrayBuffer（0.4.7：缓存直存 ab，免 blob/fetch）
         if (ep !== renderEpoch) return;
         var face = new FontFace("MpPreviewFont", buf);  // ArrayBuffer 源 → 不经 font-src
         await face.load();
@@ -376,26 +377,23 @@
     async function render3D(filePath, ep) {
         var T = await waitForThree();  // three.js 由 static defer script 加载，等就绪（通常已加载完）
         if (ep !== renderEpoch) return;
-        var url = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));
+        var ab = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));  // ab=arrayBuffer（0.4.7：缓存直存 ab，免 blob/fetch(blobUrl) 被 connect-src 拦）
         if (ep !== renderEpoch) return;
         var ext = (filePath.split(".").pop() || "").toLowerCase();
         // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
         var object;
         if (ext === "glb" || ext === "gltf") {
-            var ab = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
-            var gltf = await new T.GLTFLoader().parseAsync(ab, ""); if (ep !== renderEpoch) return;
+            var gltf = await new T.GLTFLoader().parseAsync(ab, ""); if (ep !== renderEpoch) return;  // parseAsync 纯 CPU（同步 parse 包 Promise），大模型阻塞主线程
             object = gltf.scene;
         } else if (ext === "stl") {
-            var abS = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
-            var geo = new T.STLLoader().parse(abS); if (ep !== renderEpoch) return;
+            var geo = new T.STLLoader().parse(ab); if (ep !== renderEpoch) return;
             if (!geo.attributes.normal) geo.computeVertexNormals();  // STL 无法线则算（MeshStandardMaterial 需法线着色）
             object = new T.Mesh(geo, new T.MeshStandardMaterial({ color: 0x88aacc, metalness: 0.1, roughness: 0.75 }));
         } else if (ext === "obj") {
-            var text = await (await fetch(url)).text(); if (ep !== renderEpoch) return;  // OBJ 是 ASCII 文本格式（非 arrayBuffer）
+            var text = new TextDecoder().decode(ab); if (ep !== renderEpoch) return;  // OBJ=ASCII 文本，ab→text（TextDecoder 同步，不经 fetch）
             object = new T.OBJLoader().parse(text); if (ep !== renderEpoch) return;
         } else if (ext === "fbx") {
-            var abF = await (await fetch(url)).arrayBuffer(); if (ep !== renderEpoch) return;
-            object = new T.FBXLoader().parse(abF, ""); if (ep !== renderEpoch) return;
+            object = new T.FBXLoader().parse(ab, ""); if (ep !== renderEpoch) return;
         } else { if (ep === renderEpoch) showPopupError("不支持的 3D 格式：" + ext); return; }
         if (ep !== renderEpoch) return;
         // 归一化：stl/obj/fbx 原始几何常不在原点/尺寸悬殊 → 居中 + 缩放到 ~3 单位，相机 z=5 看全
