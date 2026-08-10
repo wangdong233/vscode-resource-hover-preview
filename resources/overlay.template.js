@@ -356,29 +356,26 @@
         content.replaceChildren(canvas);
     }
 
-    // 3D 库加载：fetch /lib/ 文本 → eval 执行（IIFE bundle 设 globalThis.MP_THREE 副作用）。
-    // ⚠️ 0.4.5 根因修：原 import(blob:) 在 workbench 真机失败 "Failed to fetch"——CSP script-src 虽含 blob:，
-    //   但 require-trusted-types-for 'script' 拦了动态 import 的 blob 模块加载。改用 eval：eval 由 CSP 'unsafe-eval'
-    //   放行，Trusted Types 不管 eval（TT 仅管 DOM 字符串 sink 如 innerHTML/script.src，不管 eval）。
-    //   IIFE bundle 无 export（eval/script 上下文不支持 export 语法），故 eval IIFE 可行、eval ESM 不行（pdf.js 已删）。
-    //   ★ eval 首次执行 2MB bundle 会同步阻塞主线程 ~300-500ms（一次性，_libCache 缓存），是 3D 首屏延迟主因。
-    var _libCache = {};
-    async function loadLib(name, libPath) {
-        if (_libCache[name]) return _libCache[name];
-        var resp = await fetch(SERVER_BASE + "/lib/" + libPath + "?token=" + encodeURIComponent(TOKEN));
-        if (!resp.ok) throw new Error("load " + name + " failed: " + resp.status);
-        var code = await resp.text();
-        (0, eval)(code);  // 全局 eval 执行 IIFE → 设 globalThis（免 import/TT）
-        _libCache[name] = window.MP_THREE;
-        return _libCache[name];
+    // three.js 加载：由 workbench.html 的 <script defer src="mp-three.js"> 静态注入（0.4.6）。
+    // ★ 唯一 TT-safe 加载法：workbench require-trusted-types-for 'script' 实测拦了 import(blob:)【Failed to fetch】
+    //   AND eval/Function【Evaluating a string violates Trusted Type】。static <script src> 在解析期注入不经 TT（mp-overlay.js 同款 proven）。
+    //   defer=后台下载+解析（2MB），不阻塞 workbench 启动；render3D 调 waitForThree 等 globalThis.MP_THREE 就绪。
+    function waitForThree() {
+        if (window.MP_THREE) return Promise.resolve(window.MP_THREE);
+        return new Promise(function (resolve, reject) {
+            var start = Date.now();
+            var iv = setInterval(function () {
+                if (window.MP_THREE) { clearInterval(iv); resolve(window.MP_THREE); }
+                else if (Date.now() - start > 8000) { clearInterval(iv); reject(new Error("three.js 加载超时（mp-three.js 未就绪）")); }
+            }, 50);
+        });
     }
 
-    // v0.5 3D：three.js esbuild bundle（doc08 §5）。Spike7 真机验证前置（test-pending）。
+    // v0.5 3D：three.js esbuild bundle（doc08 §5）。
     var threeReady = null;
     async function render3D(filePath, ep) {
-        await loadLib("three", "mp-three.bundle.js");
+        var T = await waitForThree();  // three.js 由 static defer script 加载，等就绪（通常已加载完）
         if (ep !== renderEpoch) return;
-        var T = window.MP_THREE;
         var url = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));
         if (ep !== renderEpoch) return;
         var ext = (filePath.split(".").pop() || "").toLowerCase();
@@ -495,13 +492,5 @@
     }
 
     console.log("[mp-overlay] loaded", cfg.version);
-    waitForExplorer(function () {
-        setupHoverListeners();
-        console.log("[mp-overlay] hover listeners attached");
-        // 0.4.5：空闲期预 eval 2MB three bundle（移出首次 hover 的 ~300-500ms 主线程阻塞到启动后空闲，
-        //   首个 3D hover 命中 _libCache 秒过 eval，只剩 per-file 同步 parse）。requestIdleCallback 不阻塞启动交互。
-        if ("requestIdleCallback" in window) {
-            requestIdleCallback(function () { loadLib("three", "mp-three.bundle.js").catch(function () {}); });
-        }
-    });
+    waitForExplorer(function () { setupHoverListeners(); console.log("[mp-overlay] hover listeners attached"); });
 })();

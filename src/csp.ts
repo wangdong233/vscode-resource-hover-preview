@@ -26,8 +26,10 @@ function injectCspDirective(csp: string, directive: string, token: string): stri
 }
 
 // 注入静态 script 标记块（</html> 主锚 = vscode-custom-css 先例 + spike2 实证；</body>/EOF 兜底）
+// 0.4.6：加 <script defer src="./mp-three.js"> —— three.js 2MB bundle 静态注入（唯一 TT-safe 加载法；
+//   import(blob:)/eval 都被 workbench require-trusted-types-for 拦）。defer=后台加载不阻塞 workbench 启动。
 export function injectScriptTag(html: string, version: string, overlayHash: string): string {
-    const block = `<!--mp-injected:${version}:${overlayHash}-->\n<script src="./mp-config.js"></script>\n<script src="./mp-overlay.js"></script>\n<!--/mp-injected-->\n`;
+    const block = `<!--mp-injected:${version}:${overlayHash}-->\n<script src="./mp-config.js"></script>\n<script defer src="./mp-three.js"></script>\n<script src="./mp-overlay.js"></script>\n<!--/mp-injected-->\n`;
     if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${block}</html>`);
     if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${block}</body>`);
     return html + block;

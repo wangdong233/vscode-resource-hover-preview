@@ -27,6 +27,14 @@ function findBakedOverlay(): string | null {
     const p = path.join(installDir, "mp-overlay.js");
     return fs.existsSync(p) ? p : null;
 }
+// mp-three.js 定位：INSTALL_DIR/resources/lib/mp-three.bundle.js（companion vsix 携带，0.4.6 静态注入）
+// ★ 0.4.6：import(blob:)/eval 都被 workbench TT 拦 → three.js 必须 static <script defer src> 注入（同 mp-overlay.js proven TT-safe）
+function findThreeBundle(): string | null {
+    const installDir = locateInstallDir();
+    if (!installDir) return null;
+    const p = path.join(installDir, "resources", "lib", "mp-three.bundle.js");
+    return fs.existsSync(p) ? p : null;
+}
 function findOverlayTemplate(): string | null {
     const candidates = [
         path.join(HERE, "..", "resources", "overlay.template.js"), // 项目 dist/ → ../resources
@@ -99,10 +107,14 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
                 buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));
         }
         if (state === "fresh") {
-            // v0.1审查🔵：fresh 也校验 mp-overlay.js 存在（被删则补拷，否则 script 404 静默死）
-            const overlayDest = path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js");
+            // v0.1审查🔵：fresh 也校验 mp-overlay.js + mp-three.js 存在（被删则补拷，否则 script 404 静默死）
+            const wbDir = path.dirname(workbenchHtmlPath);
+            const overlayDest = path.join(wbDir, "mp-overlay.js");
             const overlaySrc = findBakedOverlay();
             if (overlaySrc && !fs.existsSync(overlayDest)) atomicCopyFileSync(overlaySrc, overlayDest);
+            const threeDest = path.join(wbDir, "mp-three.js");
+            const threeSrc = findThreeBundle();
+            if (threeSrc && !fs.existsSync(threeDest)) atomicCopyFileSync(threeSrc, threeDest);
             return "fresh";
         }
 
@@ -125,6 +137,10 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
             writeAtomicSync(workbenchHtmlPath, injected);
             // 复制 mp-overlay.js 到 workbench 同目录
             atomicCopyFileSync(overlaySrc, path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js"));
+            // 复制 mp-three.js（0.4.6 静态注入 three.js bundle，TT-safe）
+            const threeSrc = findThreeBundle();
+            if (threeSrc) atomicCopyFileSync(threeSrc, path.join(path.dirname(workbenchHtmlPath), "mp-three.js"));
+            else console.warn("[mp] mp-three.bundle.js 未找到（INSTALL_DIR/resources/lib），3D 预览不可用");
             // （mp-config.js 已在函数开头 bake，fresh/absent 统一）
             // ★ 重算 checksum（workbench 写盘后）
             patchProductChecksums(productJsonPath, outDir);
