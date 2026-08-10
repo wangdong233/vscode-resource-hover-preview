@@ -211,18 +211,18 @@
                 };
                 var onMove = function (ev) { lastEv = ev; if (!rafId) rafId = requestAnimationFrame(applyResize); };
                 var onUp = function (ev) {
-                    handle.removeEventListener("pointermove", onMove); handle.removeEventListener("pointerup", onUp);
+                    handle.removeEventListener("pointermove", onMove); handle.removeEventListener("pointerup", onUp); handle.removeEventListener("pointercancel", onUp);
                     try { handle.releasePointerCapture(e.pointerId); } catch (err) {}
                     if (rafId) cancelAnimationFrame(rafId);
                     applyResize();  // 最终精确
                     savePopupSize(popup.offsetWidth, popup.offsetHeight);
                 };
-                handle.addEventListener("pointermove", onMove); handle.addEventListener("pointerup", onUp);  // 捕获后事件落 handle
+                handle.addEventListener("pointermove", onMove); handle.addEventListener("pointerup", onUp); handle.addEventListener("pointercancel", onUp);  // 🟡 复审：pointercancel（cmd+tab/睡眠/触摸打断）也走 onUp 清理，免监听泄漏
             });
         });
         pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.classList.toggle("is-pinned", isPinned); });  // Wave2：class 高亮替代文本（窄 rail 不撑宽）
         resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
-        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = false; pinBtn.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 清 currentHovered/lastRenderedItem + is-pinned class（复审 rev3：popup 单例复用后 pin 按钮视觉状态机说谎）
+        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); if (activeRenameDone) activeRenameDone(false); isPinned = false; pinBtn.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 🔵 复审：改名中途关闭先 done(false) 取消（恢复 fname）再关，免下次 show 崩
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
         popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); });  // 在 popup 上 → 取消关闭
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
@@ -315,7 +315,7 @@
     }
 
     // 0.4.9 文件名点击改名：fname → input → Enter/blur 提交 → fetch /rename（server fs.rename + containment）→ 刷新 Explorer
-    var editing = false;
+    var editing = false, activeRenameDone = null;  // activeRenameDone: closeBtn 改名中途关闭时调 done(false) 取消（🔵 复审：否则 input 被 hidePopup 清除但 fname 未恢复 → 下次 show querySelector(".mp-fname") null 崩）
     function startRename() {
         if (editing) return;
         var item = currentHovered; if (!item) return;
@@ -323,23 +323,26 @@
         if (!oldFull || !oldName) return;
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         var fname = popup.querySelector(".mp-fname"); if (!fname) return;
-        if (!isPinned) { isPinned = true; if (pinBtnEl) pinBtnEl.classList.add("is-pinned"); }  // 编辑期间锁（防 hideTimer 关闭丢输入）
+        var wasPinned = isPinned;  // 🔴 03 复审：捕获改名前 pin 态，done() 复位（否则首次改名后永久 pin）
+        if (!wasPinned) { isPinned = true; if (pinBtnEl) pinBtnEl.classList.add("is-pinned"); }  // 编辑期间锁（防 hideTimer 关闭丢输入）
         editing = true;
         var input = document.createElement("input");
         input.type = "text"; input.value = oldName;
-        input.style.cssText = "font:500 11px/1.4 sans-serif;color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";
+        input.style.cssText = "font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";  // 🔵 复审：font 与 .mp-fname 对齐（var 字体，编辑/显示态不跳变）
         fname.replaceWith(input); input.focus(); input.select();
         var done = function (commit) {
-            if (!editing) return; editing = false;
+            if (!editing) return; editing = false; activeRenameDone = null;  // 🔵 复审：清 closeBtn 取消钩
+            if (!wasPinned) { isPinned = false; if (pinBtnEl) pinBtnEl.classList.remove("is-pinned"); }  // 🔴 复审：复位改名前 pin 态（不偷用户已设的 pin）
             var nn = input.value.trim();
             input.replaceWith(fname);
             if (commit && nn && nn !== oldName) {
                 fetch(SERVER_BASE + "/rename?token=" + encodeURIComponent(TOKEN) + "&oldPath=" + encodeURIComponent(oldFull) + "&newName=" + encodeURIComponent(nn))
-                    .then(function (r) { return r.json().catch(function () { return {}; }); })
+                    .then(function (r) { return r.json().catch(function () { return { ok: false, error: "server " + r.status }; }); })
                     .then(function (d) { if (d && d.ok) fname.textContent = nn; else showPopupError((d && d.error) || "改名失败"); })
                     .catch(function () { showPopupError("改名网络错误"); });
             }
         };
+        activeRenameDone = done;  // 🔵 供 closeBtn 中途取消
         input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); done(true); } else if (e.key === "Escape") { done(false); } });
         input.addEventListener("blur", function () { done(true); });
     }

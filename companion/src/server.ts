@@ -60,29 +60,27 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     res.writeHead(404); res.end("not found");
 }
 
-// 0.4.9 /rename：同目录改名（fs.rename）。闸门：token(已过) + newName 净化(禁路径分隔符/.。/\0) + realpath + 双路径 workspace containment。
+// 0.4.9 /rename：同目录改名（fs.rename）。闸门：token(已过) + newName 净化 + realpath + 双路径 containment + 同名碰撞检查。
+// 0.4.10 复审加固：错误统一 JSON {ok:false,error}(原纯文本致 overlay 解析塌缩) + roots=[] fail-closed(mutation 端点) + existsSync 碰撞 409(fs.rename 普通文件原子覆盖不报 EEXIST) + 净化补纯空格/Win 保留名。
 function serveRename(url: URL, res: http.ServerResponse, roots: string[], onRenamed?: (newPath: string) => void) {
+    const jsonErr = (code: number, error: string) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error })); };
     const oldPath = url.searchParams.get("oldPath");
     const newName = url.searchParams.get("newName");
-    if (!oldPath || !newName) { res.writeHead(400); res.end("missing params"); return; }
-    if (/[\\/]/.test(newName) || newName === "." || newName === ".." || newName.includes("\0") || newName.length > 255) {
-        res.writeHead(400); res.end("invalid name"); return;  // 净化：纯文件名，禁路径分隔符/目录穿越/null/超长
+    if (!oldPath || !newName) return jsonErr(400, "missing params");
+    if (newName.trim() === "" || /[\\/]/.test(newName) || newName === "." || newName === ".." || newName.includes("\0") || newName.length > 255 || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i.test(newName)) {
+        return jsonErr(400, "invalid name");  // 净化：纯空格/路径分隔符/./../null/超长/Windows 保留名
     }
+    if (roots.length === 0) return jsonErr(403, "no workspace");  // 🟡 fail-closed：mutation 端点无 workspace 默认拒（防本机进程借 token 改任意文件）
     let oldReal = oldPath.startsWith("~") ? oldPath.replace(/^~/, os.homedir()) : oldPath;
-    try { oldReal = fs.realpathSync(path.resolve(oldReal)); } catch { res.writeHead(404); res.end("not found"); return; }
+    try { oldReal = fs.realpathSync(path.resolve(oldReal)); } catch { return jsonErr(404, "not found"); }
     const newPath = path.join(path.dirname(oldReal), newName);  // 同目录 + 纯文件名（newName 已净化）
-    if (roots.length > 0) {  // 双路径 containment（old + new 都须在 workspace 内，双保险）
-        const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
-        const inside = (p: string) => realRoots.some(r => p === r || p.startsWith(r + path.sep));
-        if (!inside(oldReal) || !inside(newPath)) { res.writeHead(403); res.end("outside workspace"); return; }
-    }
+    const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
+    const inside = (p: string) => realRoots.some(r => p === r || p.startsWith(r + path.sep));
+    if (!inside(oldReal) || !inside(newPath)) return jsonErr(403, "outside workspace");  // 双路径 containment
+    if (fs.existsSync(newPath) && newPath !== oldReal) return jsonErr(409, "exists");  // 🟡 同名碰撞 → 409（防 fs.rename 原子覆盖静默丢数据）
     fs.rename(oldReal, newPath, err => {
-        if (err) {
-            const code = err.code || "";
-            res.writeHead(code === "ENOENT" ? 404 : code === "EEXIST" || code === "ENOTEMPTY" ? 409 : 500);
-            res.end(code || "rename error"); return;
-        }
-        if (typeof onRenamed === "function") { try { onRenamed(newPath); } catch (e) { /* ignore */ } }  // EH 触发 Explorer 刷新
+        if (err) { const code = err.code || ""; return jsonErr(code === "ENOENT" ? 404 : 500, code || "rename error"); }
+        if (typeof onRenamed === "function") { try { onRenamed(newPath); } catch (e) { /* ignore */ } }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, newPath }));
     });
