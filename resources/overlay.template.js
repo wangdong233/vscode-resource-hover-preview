@@ -374,12 +374,73 @@
 
     // v0.5 3D：three.js esbuild bundle（doc08 §5）。
     var threeReady = null;
+    // 0.4.8 大文件性能：阈值降级 + 元信息优先（防大 3D 文件 auto-parse 冻结 UI）。/preview 已支持 Range（206）。
+    var TIER_AUTO = 5 * 1024 * 1024;  // <5MB 自动渲染；≥5MB 走元信息卡 + 加载完整按钮（不 auto-parse）
+    function probeSize(filePath) {  // Range bytes=0-0 → Content-Range total（不发 HEAD，零 server 改动）
+        return fetch(previewUrl(filePath, "3d"), { headers: { Range: "bytes=0-0" } })
+            .then(function (r) {
+                if (r.status !== 206) return null;  // 未支持 Range → fail-open（返 null 走全量自动渲染）
+                var cr = r.headers.get("Content-Range") || "";  // "bytes 0-0/12345"
+                var m = /\/(\d+)$/.exec(cr); return m ? parseInt(m[1], 10) : null;
+            }).catch(function () { return null; });  // 网络错 → fail-open
+    }
+    function rangeFetch(filePath, start, end) {  // 单次 Range 取 [start,end] → arrayBuffer
+        return fetch(previewUrl(filePath, "3d"), { headers: { Range: "bytes=" + start + "-" + end } })
+            .then(function (r) { if (r.status !== 206 && r.status !== 200) throw new Error("range " + r.status); return r.arrayBuffer(); });
+    }
+    // 元信息免 parse 提取（v1：STL 头拿面数/顶点；其他格式仅大小。GLB bbox 留 v2）
+    async function extractMeta(filePath, ext, total) {
+        var meta = { format: ext.toUpperCase(), size: total, faces: null, vertices: null };
+        if (ext === "stl") {
+            try {
+                var hdr = await rangeFetch(filePath, 0, 83);  // 84B header
+                if (hdr.byteLength >= 84) {
+                    var dv = new DataView(hdr), n = dv.getUint32(80, true);  // 三角面数 LE @80
+                    if (84 + n * 50 === total) { meta.format = "STL (binary)"; meta.faces = n; meta.vertices = n * 3; }
+                    else meta.format = "STL (ASCII)";  // 非 binary 长度公式 → ASCII
+                }
+            } catch (e) {}
+        }
+        return meta;
+    }
+    function formatBytes(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB"; }
+    // 大文件元信息卡 + "加载完整"按钮（不 auto-parse 防 UI 冻结；用户主动点才完整渲染）
+    function showBigModelCard(filePath, ext, meta, total, T) {
+        var content = document.querySelector(".mp-content"); content.replaceChildren();
+        var card = document.createElement("div"); card.style.cssText = "padding:18px;color:var(--vscode-descriptionForeground,#aaa);font-size:12px;line-height:2;text-align:left;width:100%";
+        function row(label, val) { var d = document.createElement("div"); d.textContent = label + val; card.appendChild(d); }
+        row("格式：", meta.format || ext.toUpperCase());
+        row("大小：", formatBytes(total));
+        if (meta.faces) row("三角面数：", meta.faces.toLocaleString());
+        if (meta.vertices) row("顶点数：", meta.vertices.toLocaleString());
+        var note = document.createElement("div"); note.style.cssText = "margin-top:8px;color:#888;font-size:11px"; note.textContent = "大模型，完整解析会短暂占用主线程"; card.appendChild(note);
+        var btn = document.createElement("button"); btn.textContent = "加载完整 3D 预览";
+        btn.style.cssText = "display:block;margin-top:12px;padding:6px 14px;cursor:pointer;background:var(--vscode-button-background,#0e639c);color:#fff;border:none;border-radius:3px;font-size:12px";
+        btn.addEventListener("click", function () {
+            var ep2 = ++renderEpoch; pinCurrent(filePath, "3d");
+            render3DFull(filePath, ep2, ext, T).catch(function (e) { if (ep2 === renderEpoch) showPopupError(e.message); });
+        });
+        card.appendChild(btn);
+        content.appendChild(card);
+    }
     async function render3D(filePath, ep) {
         var T = await waitForThree();  // three.js 由 static defer script 加载，等就绪（通常已加载完）
         if (ep !== renderEpoch) return;
+        var ext = (filePath.split(".").pop() || "").toLowerCase();
+        // 0.4.8 大文件分档：probe size → ≥5MB 走元信息卡（不 auto-parse 防 UI 冻结），<5MB 自动渲染
+        var total = await probeSize(filePath); if (ep !== renderEpoch) return;
+        if (total && total > TIER_AUTO) {
+            var meta = null;
+            try { meta = await extractMeta(filePath, ext, total); } catch (e) { meta = { format: ext.toUpperCase(), size: total }; }
+            if (ep !== renderEpoch) return;
+            showBigModelCard(filePath, ext, meta, total, T);
+            return;
+        }
+        await render3DFull(filePath, ep, ext, T);
+    }
+    async function render3DFull(filePath, ep, ext, T) {
         var ab = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));  // ab=arrayBuffer（0.4.7：缓存直存 ab，免 blob/fetch(blobUrl) 被 connect-src 拦）
         if (ep !== renderEpoch) return;
-        var ext = (filePath.split(".").pop() || "").toLowerCase();
         // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
         var object;
         if (ext === "glb" || ext === "gltf") {
@@ -416,12 +477,24 @@
         scene.add(new T.HemisphereLight(0xffffff, 0x444444, 1.2));  // 光照（stl 默认材质 + glb/fbx 标准 PBR 材质需光）
         var dir = new T.DirectionalLight(0xffffff, 1.0); dir.position.set(2, 3, 2); scene.add(dir);
         var camera = new T.PerspectiveCamera(45, cw / ch, 0.1, 1000);
-        camera.position.set(0, 0, 5);
+        camera.position.set(2.2, 1.8, 4.2);  // 0.4.8：3/4 hero 视角（零几何空间升级；原 (0,0,5) 正交直视像 2D 贴图）
+        camera.lookAt(0, 0, 0);
         var renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));  // 封顶 2x（popup 小，控 GPU）
+        renderer.setClearColor(0x2d2d30, 1);  // 0.4.8：中深灰底（★修黑底；≈VSCode dark/three.js editor 0x333333，浅/深模型剪影都清晰）
         renderer.setSize(cw, ch, false);
         var controls = new T.OrbitControls(camera, canvas);
         controls.target.set(0, 0, 0);
+        controls.update();  // 必调，否则首帧用旧 target
         scene.add(object);
+        // 0.4.8：STL/OBJ（CAD 件）加淡网格地面（用户诉求 + three.js editor/Blender 范式；glb/fbx 资产/角色不加免"穿网格"违和）。traverse 会收集 grid 的 geometry/material 进 disposables。
+        if (ext === "stl" || ext === "obj") {
+            var floorBox = new T.Box3().setFromObject(object);
+            var grid = new T.GridHelper(8, 8, 0x666666, 0x3a3a3a);
+            grid.material.transparent = true; grid.material.opacity = 0.5;
+            grid.position.y = floorBox.min.y;  // 贴模型底部（归一化后）
+            scene.add(grid);
+        }
         var disposables = [];
         scene.traverse(function (o) {  // 遍历收集 geometry/material/texture 防 GPU 泄漏（glb/stl/obj/fbx 通用）
             if (o.geometry) disposables.push(o.geometry);
