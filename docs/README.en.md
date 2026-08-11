@@ -12,6 +12,8 @@
 
 [简体中文](../README.md) | **English**
 
+<img src="images/预览示例.png" width="720" alt="Explorer hover floating preview demo">
+
 </div>
 
 ---
@@ -44,11 +46,11 @@
 npx -y vscode-resource-hover-preview@latest
 ```
 
-**Cmd+Q** (Mac) / Close all windows (Win/Linux) → Reopen VSCode.
+**Fully quit** VSCode and reopen (Mac: Cmd+Q; Windows/Linux: Quit from tray or menu — closing windows alone may not suffice).
 
 Hover over a file in the Explorer → floating preview appears. **Install once, works forever.**
 
-> ⚠️ Must **fully quit and restart** (Cmd+Q), NOT `Reload Window` — Reload doesn't re-read the patched workbench, patch won't take effect.
+> ⚠️ Must **fully quit** then restart (Mac Cmd+Q / Windows tray Quit / Linux fully quit), NOT `Reload Window` — Reload doesn't re-read the patched workbench, patch won't take effect.
 
 ### After VSCode Updates?
 

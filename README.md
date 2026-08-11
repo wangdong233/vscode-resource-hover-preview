@@ -12,6 +12,8 @@
 
 **简体中文** | [English](docs/README.en.md)
 
+<img src="docs/images/预览示例.png" width="720" alt="资源管理器悬停浮动预览示例">
+
 </div>
 
 ---
@@ -44,11 +46,11 @@
 npx -y vscode-resource-hover-preview@latest
 ```
 
-**Cmd+Q**（Mac）/ 关闭所有窗口（Win/Linux）→ 重新打开 VSCode。
+**完全退出** VSCode 再重新打开（Mac: Cmd+Q；Windows/Linux: 托盘或菜单 Quit，仅关窗口可能不够）。
 
 悬停资源管理器里的文件 → 浮动弹窗直接显示。**装一次就生效。**
 
-> ⚠️ 必须**完全退出重启**（Cmd+Q），不是 `Reload Window`——Reload 不重读 workbench，patch 不生效。
+> ⚠️ 必须**完全退出**再重启（Mac Cmd+Q / Windows 托盘 Quit / Linux 完全退出），不是 `Reload Window`——Reload 不重读 workbench，patch 不生效。
 
 ### VSCode 更新后怎么办？
 
