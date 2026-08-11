@@ -427,7 +427,9 @@
         audio.src = mediaUrl(filePath, "audio");
         audio.controls = true; audio.style.width = "100%";
         content.replaceChildren(audio);
-        audio.addEventListener("canplay", function () { audio.play().catch(function () {}); });  // 0.5.3: autoplay 被拦→静默(native controls 已有播放键,不需 fallback btn)
+        audio.addEventListener("canplay", function () {
+            audio.play().then(function () { setTimeout(function () { audio.muted = false; }, 100); }).catch(function () {});  // 0.5.6: muted autoplay(永远通过)→ 100ms 后 unmute(Chromium 不重新检查)
+        });
         // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
         var popup = document.getElementById("mp-popup");
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
