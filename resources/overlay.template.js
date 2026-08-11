@@ -16,6 +16,7 @@
     var pinBtnEl = null;  // 0.4.9 供 startRename 改 is-pinned（直接持引用,免按 class 查——pin 按钮由 .mp-rail button 泛化样式,无独立 CSS 规则）
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
+    var lastRenderedPath = null;  // 0.5.4: 已渲染项路径（startRename 取此,不取 currentHovered——后者可能因 hoverTimer 延迟与显示不同步）
     var renderEpoch = 0;  // 渲染代际（防异步竞态 A 的 promise 覆盖 B，审查 3.6）
     var hasFfmpeg = false;  // 档3:/ping 缓存——非原生格式(avi/aiff)仅在 ffmpeg 在时弹浮窗,不在则不弹(用户要求不做提醒)
     var NATIVE_VIDEO = ["mp4", "webm", "ogg", "mov", "m4v", "mkv"];  // Chromium 原生解复用/解码
@@ -43,12 +44,10 @@
         var ext = (filename.split(".").pop() || "").toLowerCase();
         if (IMAGE_EXTS.indexOf(ext) >= 0) return "image";
         if (VIDEO_EXTS.indexOf(ext) >= 0) {
-            if (NATIVE_VIDEO.indexOf(ext) >= 0 || hasFfmpeg) return "video";  // 原生或 ffmpeg 可转码 → 弹浮窗
-            return null;  // 非原生(avi/flv) + 无 ffmpeg → 不弹(用户要求不做提醒)
+            return "video";  // 0.5.4: 始终返 video(非原生走 /transcode,失败则 hidePopup 静默)
         }
         if (AUDIO_EXTS.indexOf(ext) >= 0) {
-            if (NATIVE_AUDIO.indexOf(ext) >= 0 || hasFfmpeg) return "audio";
-            return null;
+            return "audio";  // 0.5.4: 始终返 audio
         }
         if (FONT_EXTS.indexOf(ext) >= 0) return "font";
         if (MODEL3D_EXTS.indexOf(ext) >= 0) return "3d";
@@ -165,7 +164,7 @@
         document.body.appendChild(popup);
         bindInteractions(popup, pinBtn, closeBtn, resetBtn);
         pinBtnEl = pinBtn;  // 0.4.9 供 startRename（非 querySelector）
-        loadPopupSize(popup);
+        // 0.5.4: loadPopupSize 改 per-type,在各 renderer 内调用
         return popup;
     }
 
@@ -264,8 +263,8 @@
         });
     }
 
-    function savePopupSize(w, h) { try { localStorage.setItem(SIZE_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {} }
-    function loadPopupSize(popup) { try { var s = JSON.parse(localStorage.getItem(SIZE_KEY) || "{}"); if (s.w && s.h) { popup.style.width = s.w + "px"; popup.style.height = s.h + "px"; } } catch (e) {} }
+    function savePopupSize(w, h) { try { localStorage.setItem("mp.popupSize." + (activeRendererType || "default"), JSON.stringify({ w: w, h: h })); } catch (e) {} }  // 0.5.4: per-type 保存
+    function loadPopupSize(popup, type) { try { var s = JSON.parse(localStorage.getItem("mp.popupSize." + (type || "default")) || "{}"); if (s.w && s.h) { popup.style.width = s.w + "px"; popup.style.height = s.h + "px"; return true; } } catch (e) {} return false; }  // 0.5.4: per-type 加载
     // 0.4.9 图片/视频尺寸适配：popup 贴合内容 intrinsic 尺寸（无 letterbox 黑边），上限 70vw/70vh，地板 200×150。
     // 保留 object-fit:contain（popup 贴合比例时 no-op 无黑边；手动 resize 变比例时保图不变形）。
     function fitPopupToContent(nw, nh, rect) {
@@ -351,7 +350,7 @@
     function startRename() {
         if (editing) return;
         var item = currentHovered; if (!item) return;
-        var oldFull = getFullPath(item), oldName = getLabelName(item);
+        var oldFull = lastRenderedPath, oldName = fname.textContent.trim();  // 0.5.4: 从显示元素取(不取 currentHovered——可能因 hoverTimer 与显示不同步)
         if (!oldFull || !oldName) return;
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         var fname = popup.querySelector(".mp-fname"); if (!fname) return;
@@ -391,6 +390,7 @@
             img.src = dataUrl; img.alt = filePath;
             return img.decode().then(function () {
                 if (ep !== renderEpoch) return;
+                loadPopupSize(document.getElementById("mp-popup"), "image");
                 fitPopupToContent(img.naturalWidth, img.naturalHeight, rect);  // 0.4.9：贴合图片 natural 尺寸无黑边
                 document.querySelector(".mp-content").replaceChildren(img);
             });
@@ -409,7 +409,7 @@
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
             var vext = (filePath.split(".").pop() || "").toLowerCase();
-            if (NATIVE_VIDEO.indexOf(vext) < 0) showPopupError("." + vext + " 格式不支持浏览器预览（Chromium 仅原生解码 MP4/WebM，" + vext.toUpperCase() + " 需转码或外部播放器）");
+            if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); return; }  // 0.5.4: 非原生(avi/flv)失败 → 静默关(用户要求不做提醒)
             else showPopupError("video 加载失败");
         });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
@@ -625,7 +625,7 @@
         var filename = getLabelName(rowEl);
         if (!filename) return;
         var type = detectMediaType(filename);
-        if (!type) return; // 非媒体
+        if (!type) { hidePopup(); currentHovered = null; lastRenderedItem = null; return; }  // 0.5.4: 非媒体文件 → 关闭当前浮窗(否则旧内容残留)
         var fullPath = getFullPath(rowEl);
         if (!fullPath) return; // 路径取不到（remote 等 fallback 待 v0.2+）
         if (rowEl === lastRenderedItem) {  // 同项已渲染且仍可见 → 不重复 fetch（审查 3.1：防 hideTimer 清 currentHovered 后 re-hover 闪烁）
@@ -633,6 +633,7 @@
             if (existing && existing.style.display !== "none") return;
         }
         lastRenderedItem = rowEl;
+        lastRenderedPath = fullPath;
         var popup = ensurePopup();
         var fn = popup.querySelector(".mp-fname"); fn.textContent = filename;
         popup.style.display = "flex";
