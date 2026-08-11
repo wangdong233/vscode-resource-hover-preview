@@ -405,7 +405,7 @@
         video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
-        video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) fitPopupToContent(video.videoWidth, video.videoHeight, rect); });  // 0.4.9：贴合视频尺寸
+        video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) { loadPopupSize(document.getElementById("mp-popup"), "video"); fitPopupToContent(video.videoWidth, video.videoHeight, rect); } });  // 0.4.9：贴合视频尺寸
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
             var vext = (filePath.split(".").pop() || "").toLowerCase();
@@ -526,7 +526,8 @@
     async function render3D(filePath, ep, rect) {
         var T = await waitForThree();
         if (ep !== renderEpoch) return;
-        var p3d = document.getElementById("mp-popup"); if (p3d) { p3d.style.width = "600px"; p3d.style.height = "450px"; p3d.style.minHeight = ""; if (rect) placePopup(rect); }
+        var p3d = document.getElementById("mp-popup");
+        if (p3d && !loadPopupSize(p3d, "3d")) { p3d.style.width = "600px"; p3d.style.height = "450px"; p3d.style.minHeight = ""; if (rect) placePopup(rect); }
         var ext = (filePath.split(".").pop() || "").toLowerCase();
         // 0.4.8 大文件分档：probe size → ≥5MB 走元信息卡（不 auto-parse 防 UI 冻结），<5MB 自动渲染
         var total = await probeSize(filePath); if (ep !== renderEpoch) return;
@@ -672,7 +673,7 @@
         function probeFfmpeg(retries) {
             fetch(SERVER_BASE + "/ping?token=" + encodeURIComponent(TOKEN))
                 .then(function (r) { return r.json(); })
-                .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; if (hasFfmpeg) console.log("[mp-overlay] ffmpeg detected → AVI/AIFF/FLV 等走转码"); })
+                .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; console.log("[mp-overlay] ffmpeg status: " + (hasFfmpeg ? "detected → AVI/FLV 走转码" : "NOT detected → AVI/FLV 走 /transcode 但可能 404")); })
                 .catch(function () { if (retries > 0) setTimeout(function () { probeFfmpeg(retries - 1); }, 3000); });
         }
         probeFfmpeg(3);
