@@ -360,7 +360,7 @@
         editing = true;
         var input = document.createElement("input");
         input.type = "text"; input.value = oldName;
-        input.style.cssText = "font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";  // 🔵 复审：font 与 .mp-fname 对齐（var 字体，编辑/显示态不跳变）
+        input.style.cssText = "position:absolute;top:-24px;left:0;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";  // 0.5.3: 加 position:absolute;top:-24px;left:0 与 .mp-fname 同位(否则 replaceWith 后 input 回 static 流 → 左下角 + 鼠标不在 popup → mouseleave 关)  // 🔵 复审：font 与 .mp-fname 对齐（var 字体，编辑/显示态不跳变）
         fname.replaceWith(input); input.focus(); input.select();
         var done = function (commit) {
             if (!editing) return; editing = false; activeRenameDone = null;  // 🔵 复审：清 closeBtn 取消钩
@@ -427,14 +427,7 @@
         audio.src = mediaUrl(filePath, "audio");
         audio.controls = true; audio.style.width = "100%";
         content.replaceChildren(audio);
-        audio.addEventListener("canplay", function () {
-            audio.play().catch(function () {
-                if (ep !== renderEpoch) return;
-                var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "font-size:18px;padding:8px;cursor:pointer";
-                btn.addEventListener("click", function () { audio.play(); btn.remove(); });
-                content.appendChild(btn);
-            });
-        });
+        audio.addEventListener("canplay", function () { audio.play().catch(function () {}); });  // 0.5.3: autoplay 被拦→静默(native controls 已有播放键,不需 fallback btn)
         // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
         var popup = document.getElementById("mp-popup");
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
@@ -674,10 +667,13 @@
     waitForExplorer(function () {
         setupHoverListeners();
         console.log("[mp-overlay] hover listeners attached");
-        // 档3:探测 ffmpeg（AVI/AIFF 等非原生格式仅在有 ffmpeg 时弹浮窗;无则不弹不做提醒）
-        fetch(SERVER_BASE + "/ping?token=" + encodeURIComponent(TOKEN))
-            .then(function (r) { return r.json(); })
-            .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; if (hasFfmpeg) console.log("[mp-overlay] ffmpeg detected → AVI/AIFF 等非原生格式走转码"); })
-            .catch(function () { /* ignore */ });
+        // 0.5.3: 探测 ffmpeg——重试 3 次(首次可能 server 还没起,HAS_FFMPEG 阻塞 EH activate ~2s)
+        function probeFfmpeg(retries) {
+            fetch(SERVER_BASE + "/ping?token=" + encodeURIComponent(TOKEN))
+                .then(function (r) { return r.json(); })
+                .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; if (hasFfmpeg) console.log("[mp-overlay] ffmpeg detected → AVI/AIFF/FLV 等走转码"); })
+                .catch(function () { if (retries > 0) setTimeout(function () { probeFfmpeg(retries - 1); }, 3000); });
+        }
+        probeFfmpeg(3);
     });
 })();
