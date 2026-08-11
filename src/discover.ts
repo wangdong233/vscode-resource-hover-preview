@@ -7,6 +7,7 @@ export interface Install {
     appDir: string;          // .../Resources/app
     workbenchHtmlPath: string;
     productJsonPath: string;
+    mainJsPath: string;      // 0.5.10: Electron 主进程入口(package.json main 字段,注入 autoplay switch)
     outDir: string;          // .../app/out（checksum baseOutDir）
     flavor: string;
 }
@@ -26,7 +27,7 @@ export function discoverVscodeInstalls(): Install[] {
         const appDir = process.env.MP_TEST_APPDIR;
         const productJsonPath = path.join(appDir, "product.json");
         const workbenchHtmlPath = path.join(appDir, "out", "vs", "code", "electron-browser", "workbench", "workbench.html");
-        return [{ appDir, workbenchHtmlPath, productJsonPath, outDir: path.join(appDir, "out"), flavor: "test" }];
+        return [{ appDir, workbenchHtmlPath, productJsonPath, mainJsPath: resolveMainJs(appDir), outDir: path.join(appDir, "out"), flavor: "test" }];
     }
     const found: Install[] = [];
     for (const appDir of candidateAppDirs()) {
@@ -36,11 +37,18 @@ export function discoverVscodeInstalls(): Install[] {
         if (!workbenchHtmlPath) continue;
         found.push({
             appDir, workbenchHtmlPath, productJsonPath,
+            mainJsPath: resolveMainJs(appDir),
             outDir: path.join(appDir, "out"),
             flavor: inferFlavor(appDir),
         });
     }
     return found;
+}
+
+// Electron 主进程入口：package.json main 字段是源真相（VSCode 约定 out/main.js,但读字段防漂移）
+function resolveMainJs(appDir: string): string {
+    try { const pkg = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "utf8")); if (pkg.main) return path.join(appDir, pkg.main); } catch { /* fall through */ }
+    return path.join(appDir, "out", "main.js");
 }
 
 function candidateAppDirs(): string[] {

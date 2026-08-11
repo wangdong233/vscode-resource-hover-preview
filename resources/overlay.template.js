@@ -13,13 +13,12 @@
     var HOVER_DELAY = 300, HIDE_DELAY = 200;
     var SIZE_KEY = "mp.popupSize";
     var isPinned = false;
-    var pinBtnEl = null;  // 0.4.9 供 startRename 改 is-pinned（直接持引用,免按 class 查——pin 按钮由 .mp-rail button 泛化样式,无独立 CSS 规则）
+    var isDragging = false;  // 0.5.13: pin 态浮窗拖动中标志(root mousemove 早退防 currentHovered 漂移 + pinBtn unpin 强制终止用)
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var lastRenderedPath = null;  // 0.5.4: 已渲染项路径（startRename 取此,不取 currentHovered——后者可能因 hoverTimer 延迟与显示不同步）
     var renderEpoch = 0;  // 渲染代际（防异步竞态 A 的 promise 覆盖 B，审查 3.6）
-    var hasFfmpeg = false;  // 档3:/ping 缓存——非原生格式(avi/aiff)仅在 ffmpeg 在时弹浮窗,不在则不弹(用户要求不做提醒)
-    var NATIVE_VIDEO = ["mp4", "webm", "ogg", "mov", "m4v", "mkv"];  // Chromium 原生解复用/解码
+    var NATIVE_VIDEO = ["mp4", "webm", "mov", "m4v", "mkv"];  // 0.5.12🟡删 ogg:detectMediaType 把 .ogg 路由到 audio(never video)→原 ogg 在此是死分支
     var NATIVE_AUDIO = ["mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"];
     // ===== 预加载缓存（Wave3 b：LRU blob 缓存，image/font/pdf/3d 命中跳 fetch）=====
     var _cache = new Map();       // key=path|type → {url, bytes, ts, pinned}
@@ -92,7 +91,7 @@
         return isNative ? previewUrl(p, type) : (SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN));
     }
     // fetcherFor：类型分派取数据 → {data, bytes}。
-    // ★ 0.4.7 根因修：font/pdf/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
+    // ★ 0.4.7 根因修：font/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
     //   毫无意义且引入 connect-src blob: 依赖（workbench connect-src 无 blob: → fetch(blobUrl) 被拦 "Failed to fetch"）。
     //   image 存 data URL 串（img.src 用）；font/3d 存 arrayBuffer（loader 直接吃，免 fetch）。
     function fetcherFor(p, type) {
@@ -126,17 +125,17 @@
     function mkIcon(d) {
         var ns = "http://www.w3.org/2000/svg";
         var svg = document.createElementNS(ns, "svg");
-        svg.setAttribute("viewBox", "0 0 16 16");
-        svg.setAttribute("width", "15"); svg.setAttribute("height", "15");
+        svg.setAttribute("viewBox", "0 0 24 24");  // 0.5.11: Lucide 24×24 图标集(原 16×16 自绘辨识度低)
+        svg.setAttribute("width", "16"); svg.setAttribute("height", "16");
         svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor");
-        svg.setAttribute("stroke-width", "1.6"); svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("stroke-width", "2"); svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
         var p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.appendChild(p);
         return svg;
     }
-    // 图标 path（16×16）：pin=圆圈(.is-pinned 时 CSS 填充)、reset=四角展开、close=X
-    var ICON_PIN = "M11.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z";
-    var ICON_RESET = "M3 6.5V3.5A.5.5 0 0 1 3.5 3H6.5 M9.5 3h3a.5.5 0 0 1 .5.5V6.5 M13 9.5v3a.5.5 0 0 1-.5.5H9.5 M6.5 13h-3a.5.5 0 0 1-.5-.5V9.5";
-    var ICON_CLOSE = "M4 4l8 8M12 4l-8 8";
+    // 图标 path（Lucide 24×24 语义化）：pin=图钉(固定)、reset=逆时针弧(恢复默认)、close=X(关闭)
+    var ICON_PIN = "M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z";  // thumbtack(.is-pinned 时 CSS 填充头部)
+    var ICON_RESET = "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5";  // rotate-ccw(恢复/重置)
+    var ICON_CLOSE = "M18 6 6 18 M6 6l12 12";  // x
 
     // ===== popup 骨架（createElement，doc03）=====
     function ensurePopup() {
@@ -163,7 +162,6 @@
         injectPopupCss();
         document.body.appendChild(popup);
         bindInteractions(popup, pinBtn, closeBtn, resetBtn);
-        pinBtnEl = pinBtn;  // 0.4.9 供 startRename（非 querySelector）
         // 0.5.4: loadPopupSize 改 per-type,在各 renderer 内调用
         return popup;
     }
@@ -197,6 +195,9 @@
             ".mp-resize-ne{top:0;right:0;cursor:nesw-resize}",
             ".mp-resize-sw{bottom:0;left:0;cursor:nesw-resize}",
             ".mp-resize-se{bottom:0;right:0;cursor:nwse-resize}",
+            "#mp-popup.is-pinned{cursor:grab}",  // 0.5.13:pin 态背景显 grab(子元素 cursor 各自声明恒胜继承:按钮 pointer/handle nwse/fname text)
+            "#mp-popup.is-pinned .mp-content video,#mp-popup.is-pinned .mp-content audio{cursor:default}",  // video/audio 非控件区保留原生(controls 是 shadow DOM,CSS 不穿透)
+            "#mp-popup.is-dragging,#mp-popup.is-dragging *{cursor:grabbing!important}",  // 拖动中统一锁定(模态捕获态,!important 唯一合法用)
         ].join("\n");
         document.head.appendChild(style);
     }
@@ -220,6 +221,18 @@
 
     // ===== 四角缩放（对角固定）+ pin + close =====
     function bindInteractions(popup, pinBtn, closeBtn, resetBtn) {
+        // 0.5.13: pin 态浮窗拖动(复用 resize 的 pointer+setPointerCapture+pointercancel+rAF 已验证范式)
+        // DRAG_SKIP:拖动时让出的交互子元素。★ H-3 决策(0.5.14 方案 C):video/audio 整体让出(保留原生控件)+ 3D canvas 特判(下行 OrbitControls)
+        //   → video/audio/3D pin 态【无可拖区】(媒体填满浮窗),仅 pin 锁定内容不随 hover 变;image/font 可拖。维持现状不追加 drag handle(产品决策,非 bug)。
+        var DRAG_SKIP = ".mp-resize,.mp-rail,.mp-fname,video,audio,button,input,a,[contenteditable]";
+        var dragPointerId = null, onDragMove = null, onDragUp = null;
+        function stopDrag() {  // unpin/close 强制终止可能进行中的拖动(capture 路由下 click 可能不触发,须主动清)
+            if (!isDragging) return;
+            if (onDragMove) { popup.removeEventListener("pointermove", onDragMove); popup.removeEventListener("pointerup", onDragUp); popup.removeEventListener("pointercancel", onDragUp); }
+            try { if (dragPointerId != null) popup.releasePointerCapture(dragPointerId); } catch (e2) {}
+            isDragging = false; dragPointerId = null; onDragMove = null; onDragUp = null;
+            popup.classList.remove("is-dragging");
+        }
         popup.querySelectorAll(".mp-resize").forEach(function (handle) {
             handle.addEventListener("pointerdown", function (e) {  // 0.4.9：pointer 事件 + setPointerCapture 修"快拖出浮窗/窗口卡住"（原 mousedown+document.mouseup 鼠标出 window 时 mouseup 丢失致 drag 残留）
                 e.preventDefault(); e.stopPropagation();
@@ -250,11 +263,36 @@
                 handle.addEventListener("pointermove", onMove); handle.addEventListener("pointerup", onUp); handle.addEventListener("pointercancel", onUp);  // 🟡 复审：pointercancel（cmd+tab/睡眠/触摸打断）也走 onUp 清理，免监听泄漏
             });
         });
-        pinBtn.addEventListener("click", function (e) { e.stopPropagation(); isPinned = !isPinned; pinBtn.classList.toggle("is-pinned", isPinned); });  // Wave2：class 高亮替代文本（窄 rail 不撑宽）
-        resetBtn.addEventListener("click", function (e) { e.stopPropagation(); popup.style.width = "400px"; popup.style.height = "300px"; savePopupSize(400, 300); });
-        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); if (activeRenameDone) activeRenameDone(false); isPinned = false; pinBtn.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 🔵 复审：改名中途关闭先 done(false) 取消（恢复 fname）再关，免下次 show 崩
+        // 0.5.13: pin 态拖动——pointerdown 落在背景(非 DRAG_SKIP 交互子元素 / 非 3D canvas)才启动
+        popup.addEventListener("pointerdown", function (e) {
+            if (e.button !== 0 || !isPinned) return;  // 仅左键 + 仅 pin 态
+            if (e.target.closest(DRAG_SKIP)) return;  // 命中按钮/handle/文件名/控件 → 让出各元素自有交互
+            if (e.target.tagName === "CANVAS" && activeRendererType === "3d") return;  // 3D canvas 让 OrbitControls 接管旋转
+            e.preventDefault();
+            try { popup.setPointerCapture(e.pointerId); } catch (err) {}  // 捕获→指针出 window 也收 move/up(复用 resize 范式)
+            dragPointerId = e.pointerId; isDragging = true; popup.classList.add("is-dragging");
+            var sx = e.clientX, sy = e.clientY, r = popup.getBoundingClientRect(), ox = r.left, oy = r.top;
+            var lastEv = e, rafId = null;
+            var apply = function () {
+                rafId = null; var ev = lastEv, vw = window.innerWidth, vh = window.innerHeight, w = popup.offsetWidth, h = popup.offsetHeight;
+                popup.style.left = Math.max(8, Math.min(ox + (ev.clientX - sx), vw - w - 8)) + "px";  // 越界夹紧(对齐 placePopup:水平 8 / 顶 28 给 .mp-fname top:-24 留净空)
+                popup.style.top = Math.max(28, Math.min(oy + (ev.clientY - sy), vh - h - 8)) + "px";
+            };
+            onDragMove = function (ev) { lastEv = ev; if (!rafId) rafId = requestAnimationFrame(apply); };  // rAF 节流 60fps
+            onDragUp = function () { if (rafId) cancelAnimationFrame(rafId); apply(); stopDrag(); };  // 终帧精确 + 清理
+            popup.addEventListener("pointermove", onDragMove); popup.addEventListener("pointerup", onDragUp); popup.addEventListener("pointercancel", onDragUp);  // pointercancel:cmd+tab/睡眠/触摸打断兜底
+        });
+        pinBtn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            if (isPinned) stopDrag();  // unpin 强制终止拖动(capture 路由下 click 可能异常,主动清)
+            isPinned = !isPinned;
+            pinBtn.classList.toggle("is-pinned", isPinned);
+            popup.classList.toggle("is-pinned", isPinned);  // 0.5.13复审 H-4 纠注:同步根仅影响 #mp-popup.is-pinned{cursor:grab} 选择器(原 latent bug=grab 光标不显);拖动门控读 isPinned 模块 var 不依赖此 class
+        });
+        resetBtn.addEventListener("click", function (e) { e.stopPropagation(); try { localStorage.removeItem("mp.popupSize." + (activeRendererType || "default")); } catch (e2) {} resetToDefaultSize(); });  // 0.5.11:清保存尺寸 + 按内容 natural 恢复(原固定 400×300 不匹配图比例→上下留白)
+        closeBtn.addEventListener("click", function (e) { e.stopPropagation(); if (activeRenameDone) activeRenameDone(false); stopDrag(); isPinned = false; pinBtn.classList.remove("is-pinned"); popup.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 0.5.13复审 H-2:走 stopDrag() 单一清理点(R-INT-07,原手动逐字段清是唯一例外,未来加 Esc/auto-hide 路径会放大);🔵 改名中途关闭先 done(false) 取消
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
-        popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); });  // 在 popup 上 → 取消关闭
+        popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); if (hoverTimer) clearTimeout(hoverTimer); });  // 0.5.12🟡修:进 popup 也清 hoverTimer(否则 300ms 内首次 hover 的 hoverTimer 仍触发 handleHover 重渲染,刷掉用户正要点的按钮)
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
             if (!isPinned) {
                 if (hideTimer) clearTimeout(hideTimer);
@@ -270,7 +308,7 @@
     function fitPopupToContent(nw, nh, rect) {
         var vw = window.innerWidth, vh = window.innerHeight;
         var w = nw || 400, h = nh || 300;  // SVG 无 natural → 兜底 400×300
-        var MAX_W = Math.min(vw * 0.35, 450), MAX_H = Math.min(vh * 0.35, 340);  // 0.4.11：按 VSCode 窗口 40% + 硬上限 560×420（原 70% 太大占满屏；保比例按窗口大小非全分辨率）
+        var MAX_W = Math.min(vw * 0.35, 450), MAX_H = Math.min(vh * 0.35, 340);  // 按窗口 35% + 硬上限 450×340（0.5.12 复审:原注释 40%/560×420 与代码不符,已纠正）
         var scale = Math.min(MAX_W / w, MAX_H / h, 1);  // 保图片比例，不放大超 natural
         w = Math.round(w * scale); h = Math.round(h * scale);
         var popup = document.getElementById("mp-popup"); if (!popup) return;
@@ -280,7 +318,22 @@
         if (rect) placePopup(rect);  // 尺寸变后重定位防越界（用 handleHover 快照 rect）
     }
 
+    // 0.5.11: 恢复默认尺寸——按 type 回 natural(图/视频无 letterbox 上下留白)/固定栏(音频 56px)/600×450(3d)。resetBtn 调用。
+    function resetToDefaultSize() {
+        var popup = document.getElementById("mp-popup"); if (!popup) return;
+        var content = popup.querySelector(".mp-content");
+        if (activeRendererType === "audio") { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; }
+        else if (activeRendererType === "3d") { popup.style.width = "600px"; popup.style.height = "450px"; popup.style.minHeight = ""; }
+        else {
+            var img = content && content.querySelector("img"), vid = content && content.querySelector("video");
+            popup.style.minHeight = "";
+            if (img && img.naturalWidth) fitPopupToContent(img.naturalWidth, img.naturalHeight);  // 贴回图比例(无上下留白)
+            else if (vid && vid.videoWidth) fitPopupToContent(vid.videoWidth, vid.videoHeight);
+            else { popup.style.width = "400px"; popup.style.height = "300px"; }
+        }
+    }
     function hidePopup() {
+        renderEpoch++;  // 0.5.12🟡修:bump 代际→in-flight render3DFull 的 ep 守卫作废,防 popup 已隐藏但其 rAF 动画循环继续空转耗 GPU(3D 资源隐性泄漏)
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         disposeContent(); popup.style.display = "none";
         var content = popup.querySelector(".mp-content"); if (content) content.replaceChildren();
@@ -305,6 +358,7 @@
         //   mousemove 高频，currentHovered 去重（同一行不重复）+ setTimeout 防抖。
         root.addEventListener("mousemove", function (e) {
             if (!isExplorerActive()) return;
+            if (isDragging) return;  // 0.5.13复审 H-4 纠注:冗余双保险防 currentHovered 漂移(handleHover 已 isPinned 主守;此守防 currentHovered 被改后下游 isMouseInPopup 等误判)
             var item = e.target.closest(".monaco-list-row[role='treeitem']") || e.target.closest("[role='treeitem']");
             if (!item) {
                 // 鼠标离开文件项区域 → 计划隐藏
@@ -350,17 +404,19 @@
     function startRename() {
         if (editing) return;
         var item = currentHovered; if (!item) return;
+        var popup = document.getElementById("mp-popup"); if (!popup) return;
+        var fname = popup.querySelector(".mp-fname"); if (!fname) return;  // 0.5.9 修:原 oldName 行先读 fname.textContent 但 var fname 在下一行才声明——var 提升致 fname=undefined→undefined.textContent TypeError→点击无反应(潜伏自 0.5.4)。先取元素再读
         var oldFull = lastRenderedPath, oldName = fname.textContent.trim();  // 0.5.4: 从显示元素取(不取 currentHovered——可能因 hoverTimer 与显示不同步)
         if (!oldFull || !oldName) return;
-        var popup = document.getElementById("mp-popup"); if (!popup) return;
-        var fname = popup.querySelector(".mp-fname"); if (!fname) return;
         // 0.4.11：不再 isPinned 锁（用户要求：鼠标离开浮窗应直接关闭）。编辑期间鼠标在 popup 内无 mouseleave → 不关；
         //   鼠标离开 popup → input blur(done 提交) + mouseleave(hideTimer 关) = 提交并关闭，符合"鼠标离开输入框生效 + 离开浮窗关闭"。
         editing = true;
         var input = document.createElement("input");
         input.type = "text"; input.value = oldName;
         input.style.cssText = "position:absolute;top:-24px;left:0;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:#fff;padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);border:1px solid #0e639c;background:#3c3c3c;outline:none;box-shadow:0 2px 8px rgba(0,0,0,.35)";  // 0.5.3: 加 position:absolute;top:-24px;left:0 与 .mp-fname 同位(否则 replaceWith 后 input 回 static 流 → 左下角 + 鼠标不在 popup → mouseleave 关)  // 🔵 复审：font 与 .mp-fname 对齐（var 字体，编辑/显示态不跳变）
-        fname.replaceWith(input); input.focus(); input.select();
+        fname.replaceWith(input); input.focus();
+        var dot = oldName.lastIndexOf(".");  // 0.5.11:只选中文件名本体,不选中后缀(photo.jpg→选 "photo",留 ".jpg")
+        if (dot > 0) input.setSelectionRange(0, dot); else input.select();  // dot>0 防隐藏文件(.bashrc dot=0→全选)
         var done = function (commit) {
             if (!editing) return; editing = false; activeRenameDone = null;  // 🔵 复审：清 closeBtn 取消钩
             var nn = input.value.trim();
@@ -384,14 +440,16 @@
         var span = document.createElement("div"); span.textContent = msg; span.style.color = "#f88"; content.appendChild(span);
     }
     function renderImage(filePath, ep, rect) {
+        activeRendererType = "image";  // 0.5.9: savePopupSize 按 type 存(原漏设→resize 存 "default" key→loadPopupSize 读 "image" 取不到→resize 不持久)
         return fetchCached(filePath, "image", fetcherFor(filePath, "image")).then(function (dataUrl) {
             if (ep !== renderEpoch) return;  // stale（已被新 hover 取代，审查 3.6）
             var img = document.createElement("img");
             img.src = dataUrl; img.alt = filePath;
             return img.decode().then(function () {
                 if (ep !== renderEpoch) return;
-                loadPopupSize(document.getElementById("mp-popup"), "image");
-                fitPopupToContent(img.naturalWidth, img.naturalHeight, rect);  // 0.4.9：贴合图片 natural 尺寸无黑边
+                var popup = document.getElementById("mp-popup");
+                if (!loadPopupSize(popup, "image")) fitPopupToContent(img.naturalWidth, img.naturalHeight, rect);  // 0.5.9:无保存尺寸才贴合 natural;有用户上次 resize 则用之(原 fit 总覆盖→resize 永不生效)
+                else if (rect) placePopup(rect);
                 document.querySelector(".mp-content").replaceChildren(img);
             });
         });
@@ -399,17 +457,18 @@
 
     // v0.2 视频：直 HTTP src（浏览器原生 Range seek，非 blob；doc08 §1）
     function renderVideo(filePath, ep, rect) {
+        activeRendererType = "video";  // 0.5.9: 同 image,savePopupSize 按 type 存
         var content = document.querySelector(".mp-content");
         var video = document.createElement("video");
         video.src = mediaUrl(filePath, "video");
         video.controls = true; video.autoplay = true; video.muted = true; video.playsInline = true;  // muted+autoplay 配对 + playsInline（doc08 §1，v0.2-v0.5审查🔵）
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         content.replaceChildren(video);
-        video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) { loadPopupSize(document.getElementById("mp-popup"), "video"); fitPopupToContent(video.videoWidth, video.videoHeight, rect); } });  // 0.4.9：贴合视频尺寸
+        video.addEventListener("loadedmetadata", function () { if (ep === renderEpoch) { var p2 = document.getElementById("mp-popup"); if (!loadPopupSize(p2, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect); else if (rect) placePopup(rect); } });  // 0.5.9:有保存尺寸则用,无才贴合
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
             var vext = (filePath.split(".").pop() || "").toLowerCase();
-            if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); return; }  // 0.5.4: 非原生(avi/flv)失败 → 静默关(用户要求不做提醒)
+            if (NATIVE_VIDEO.indexOf(vext) < 0) { console.warn("[mp] non-native video error:", vext, "→ hidePopup"); hidePopup(); return; }  // 0.5.4: 非原生(avi/flv)失败 → 静默关(用户要求不做提醒)
             else showPopupError("video 加载失败");
         });
         video.play().catch(function () {  // autoplay 被拦 → showPlayButton（doc08 §1，v0.2-v0.5审查🔵）
@@ -420,18 +479,16 @@
         });
     }
 
-    // v0.3 音频：<audio> 直 HTTP src（复用 video/serveStream 路径，波形砍 [11 F2]）
+    // v0.3 音频：<audio> 直 HTTP src,controls 可见,不 autoplay 不静音(0.5.11:Chromium 策略下 hover 无法有声 autoplay,
+    //   模拟点击=isTrusted 硬墙不可绕;用户点 play=真实手势→有声可靠。删 autoplay/muted/取消静音按钮冗余代码)
     function renderAudio(filePath, ep, rect) {
+        activeRendererType = "audio";
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
         audio.src = mediaUrl(filePath, "audio");
-        audio.controls = true; audio.style.width = "100%";
+        audio.controls = true; audio.style.width = "100%";  // 默认非静音,不 autoplay——用户点 ▶ 即有声(可靠)
         content.replaceChildren(audio);
-        audio.addEventListener("canplay", function () {
-            audio.play().then(function () { setTimeout(function () { audio.muted = false; }, 100); }).catch(function () {});  // 0.5.6: muted autoplay(永远通过)→ 100ms 后 unmute(Chromium 不重新检查)
-        });
-        // 0.4.9：音频无视觉内容 → popup 折叠成细横条（破 min-height:150 地板需设 minHeight）
-        var popup = document.getElementById("mp-popup");
+        var popup = document.getElementById("mp-popup");  // 音频无视觉内容 → popup 折叠成细横条
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
         audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
     }
@@ -540,9 +597,9 @@
             showBigModelCard(filePath, ext, meta, total, T);
             return;
         }
-        await render3DFull(filePath, ep, ext, T, rect);
+        await render3DFull(filePath, ep, ext, T);
     }
-    async function render3DFull(filePath, ep, ext, T, rect) {
+    async function render3DFull(filePath, ep, ext, T) {
         var ab = await fetchCached(filePath, "3d", fetcherFor(filePath, "3d"));  // ab=arrayBuffer（0.4.7：缓存直存 ab，免 blob/fetch(blobUrl) 被 connect-src 拦）
         if (ep !== renderEpoch) return;
         // 按格式分发：glb/gltf=GLTFLoader(场景)；stl=STLLoader(纯几何,套材质)；obj=OBJLoader(文本,Group)；fbx=FBXLoader(二进制,Group)
@@ -625,12 +682,13 @@
 
     function handleHover(rowEl, rect) {
         if (isPinned) return;  // pin 锁定当前内容，忽略新 hover（审查 3.2）
+        if (editing) { if (activeRenameDone) activeRenameDone(false); }  // 0.5.12🔴修:改名编辑中 .mp-fname 被 input 替换→下方 querySelector(".mp-fname")=null→TypeError 崩。先取消改名恢复 fname 再继续(transit<200ms 常触发)
         var filename = getLabelName(rowEl);
         if (!filename) return;
         var type = detectMediaType(filename);
         if (!type) { hidePopup(); currentHovered = null; lastRenderedItem = null; return; }  // 0.5.4: 非媒体文件 → 关闭当前浮窗(否则旧内容残留)
         var fullPath = getFullPath(rowEl);
-        if (!fullPath) return; // 路径取不到（remote 等 fallback 待 v0.2+）
+        if (!fullPath) { hidePopup(); currentHovered = null; lastRenderedItem = null; return; }  // 0.5.12🟡修:路径取不到也关浮窗(原仅 return 致旧 popup 残留,与非媒体分支不对称)
         if (rowEl === lastRenderedItem) {  // 同项已渲染且仍可见 → 不重复 fetch（审查 3.1：防 hideTimer 清 currentHovered 后 re-hover 闪烁）
             var existing = document.getElementById("mp-popup");
             if (existing && existing.style.display !== "none") return;
@@ -671,13 +729,5 @@
     waitForExplorer(function () {
         setupHoverListeners();
         console.log("[mp-overlay] hover listeners attached");
-        // 0.5.3: 探测 ffmpeg——重试 3 次(首次可能 server 还没起,HAS_FFMPEG 阻塞 EH activate ~2s)
-        function probeFfmpeg(retries) {
-            fetch(SERVER_BASE + "/ping?token=" + encodeURIComponent(TOKEN))
-                .then(function (r) { return r.json(); })
-                .then(function (d) { hasFfmpeg = !!d.hasFfmpeg; console.log("[mp-overlay] ffmpeg status: " + (hasFfmpeg ? "detected → AVI/FLV 走转码" : "NOT detected → AVI/FLV 走 /transcode 但可能 404")); })
-                .catch(function () { if (retries > 0) setTimeout(function () { probeFfmpeg(retries - 1); }, 3000); });
-        }
-        probeFfmpeg(3);
     });
 })();

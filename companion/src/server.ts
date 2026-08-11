@@ -1,10 +1,10 @@
 // EH localhost HTTP server。详见 doc/04_EH与Renderer通信协议.md（安全硬化真相源）。
-// 六道闸门（每请求按序）：OPTIONS → Host → Origin → CORS ACAO → 会话 token → 路径 containment。
+// 五道闸门（每请求按序）：Host → Origin → CORS ACAO → 会话 token → 路径 containment（OPTIONS 不需要：overlay 用 simple GET 无自定义 header，不触发 CORS preflight）。
 import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { spawn, execFileSync } from "child_process";
+import { spawn, execFile } from "child_process";  // 0.5.12:execFile 异步(免 execFileSync 同步阻塞 EH event loop)
 
 const BASE_PORT = 17741;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -20,13 +20,9 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     "3d": { exts: ["glb", "gltf", "stl", "obj", "fbx"], mime: "model/gltf-binary" },  // 0.4.3：恢复 stl/obj/fbx；0.4.5：pdf 删除
 };
 
-// ffmpeg 探测（档3：非 web 格式实时转码 AVI→MP4 / AIFF→WAV）
-function checkFfmpeg(): boolean {
-    for (const bin of ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"]) { try { execFileSync(bin, ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch (e) {} } return false;
-}
-const HAS_FFMPEG = checkFfmpeg();  // 模块加载时探测一次（用户要求：启动时检查环境，不存在则不支持该格式）
+// 档3:ffmpeg 按需 spawn(/transcode 端点收到请求时直接 spawn,不在启动时预检——预检可能误判 + 阻塞 EH activate)
 
-export interface PreviewServer { server: http.Server; port: number; token: string; }
+export interface PreviewServer { server: http.Server; port: number; }  // 0.5.12🔵删 token(返回字段未被 consumer 读,extension 已持入参 token)
 
 export function startPreviewServer(token: string, roots: string[] = [], onRenamed?: (newPath: string) => void): PreviewServer {
     const port = findPort(BASE_PORT);
@@ -36,7 +32,7 @@ export function startPreviewServer(token: string, roots: string[] = [], onRename
         else throw e;
     });
     server.listen(port, "127.0.0.1"); // ⚠️ 绝不 0.0.0.0
-    return { server, port, token };
+    return { server, port };
 }
 
 function findPort(base: number): number {
@@ -55,7 +51,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     if (origin) { res.setHeader("Access-Control-Allow-Origin", origin); res.setHeader("Vary", "Origin"); }
 
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (url.pathname === "/ping") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, hasFfmpeg: HAS_FFMPEG })); return; }  // 档3:返回 ffmpeg 状态供 overlay 判断非 web 格式是否可转码
+    if (url.pathname === "/ping") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true })); return; }  // 档3:overlay 探活(/transcode 按需 spawn ffmpeg,不在 ping 报状态——预检在 EH 模块加载期不可靠)
     // 闸门3：token（除 /ping）。空 token deny-all（v0.1审查🟡修：token='' 时 ''!=='' 为 false 会放行）
     if (!token || url.searchParams.get("token") !== token) { res.writeHead(403); res.end("forbidden token"); return; }
 
@@ -105,13 +101,16 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     // 闸门4 containment（v0.1审查🔴修）：realpath 防符号链接逃逸 + workspace 归属校验
     let realPath: string;
     try { realPath = fs.realpathSync(resolved); } catch { res.writeHead(404); res.end("not found"); return; }
+    // 0.5.12🟡注:read 端点(/preview //transcode) fail-open(roots=[] 放行)与 /rename fail-closed 不对称是有意——token 是主闸门(bake 进 workbench,
+    //   renderer 可见但属本地威胁模型),roots 仅 workspace 防御纵深;roots 在 activate 期快照、不随后开文件夹刷新(加强需加 onWorkspaceFoldersChanged listener,留后续)
     if (roots.length > 0) {
         const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
         if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) {
             res.writeHead(403); res.end("outside workspace"); return;
         }
     }
-    const stat = fs.statSync(realPath);
+    let stat: fs.Stats;
+    try { stat = fs.statSync(realPath); } catch { res.writeHead(404); res.end("not found"); return; }  // 0.5.12🟡:TOCTOU(realpath→stat 间文件被删→抛 ENOENT→无状态码 socket hangup)
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
     if (type === "image") return serveImage(realPath, res);
     if (type === "video" || type === "audio" || type === "3d" || type === "font") return serveStream(realPath, type, req, res);
@@ -131,7 +130,8 @@ function mimeForFile(filePath: string, type: string): string {
     return MIME_BY_EXT[ext] || (type === "video" ? "video/mp4" : type === "audio" ? "audio/mpeg" : "application/octet-stream");
 }
 function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse) {
-    const stat = fs.statSync(file);
+    let stat: fs.Stats;
+    try { stat = fs.statSync(file); } catch { res.writeHead(404); res.end("not found"); return; }  // 0.5.12🟡 TOCTOU(stat 抛→socket hangup)
     const mime = mimeForFile(file, type);
     const range = req.headers.range;
     if (range) {
@@ -153,7 +153,7 @@ function serveLib(url: URL, res: http.ServerResponse) {
     const name = url.pathname.slice("/lib/".length);
     if (!/^[\w.\-]+$/.test(name)) { res.writeHead(400); res.end("invalid lib name"); return; }
     const libPath = path.join(__dirname, "..", "resources", "lib", name);
-    if (!fs.existsSync(libPath) || !fs.statSync(libPath).isFile()) { res.writeHead(404); res.end("lib not found"); return; }
+    try { if (!fs.statSync(libPath).isFile()) throw 0; } catch { res.writeHead(404); res.end("lib not found"); return; }  // 0.5.12🟡:statSync + catch(原 existsSync+statSync 双调用 TOCTOU + 冗余)
     res.writeHead(200, { "Content-Type": name.endsWith(".mjs") ? "text/javascript" : "application/octet-stream" });
     fs.createReadStream(libPath).pipe(res);
 }
@@ -163,34 +163,59 @@ function serveImage(file: string, res: http.ServerResponse) {
     fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(500); res.end("read error"); return; }
         const ext = path.extname(file).slice(1);
-        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext === "ico" ? "x-icon" : ext);  // 复审：svg→svg+xml / ico→x-icon（非标直拼 Chromium 靠嗅探,显式映射确定性）
+        const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext === "ico" ? "x-icon" : ext || "octet-stream");  // 0.5.12🔵:无扩展名兜底 octet-stream(原直拼得 "image/" 无效 MIME)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });
 }
 
-// 档3 /transcode: ffmpeg 实时转码非 web 格式 → MP4(video)/WAV(audio),流式 pipe
-function serveTranscode(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
-    if (!HAS_FFMPEG) { res.writeHead(404); res.end(JSON.stringify({ ok: false, error: "no ffmpeg" })); return; }
+// 档3 ffmpeg 探测:模块级 Promise 缓存(execFile 异步,0.5.12🟡修:原 execFileSync 同步阻塞 EH event loop 最坏 8s;
+// 首次 /transcode await 期间 EH 不冻结,其他请求/IPC 正常。4 候选含绝对路径,免依赖 PATH)
+let _ffmpegPromise: Promise<string | null> | null = null;
+function findFfmpeg(): Promise<string | null> {
+    if (_ffmpegPromise) return _ffmpegPromise;
+    const candidates = ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"];
+    _ffmpegPromise = (async () => {
+        for (const p of candidates) {
+            try { await new Promise<void>((res, rej) => execFile(p, ["-version"], { timeout: 2000 }, (err: Error | null) => err ? rej(err) : res())); return p; }
+            catch { /* 试下一个 */ }
+        }
+        return null;
+    })();
+    return _ffmpegPromise;
+}
+
+// 档3 /transcode: ffmpeg 实时转码非 web 格式 → fMP4(video)/WAV(audio),流式 pipe(<video>/<audio> 直吃 chunked fMP4)
+async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
     let file = url.searchParams.get("file");
     const type = url.searchParams.get("type");
     if (!file || !type) { res.writeHead(400); res.end("missing params"); return; }
+    if (type !== "video" && type !== "audio") { res.writeHead(400); res.end("bad type"); return; }  // 0.5.12🟡:type 白名单(防 image/3d 等误走 ffmpeg 浪费 spawn)
     if (file.startsWith("~")) file = file.replace(/^~/, os.homedir());
     const resolved = path.resolve(file);
     let realPath: string;
     try { realPath = fs.realpathSync(resolved); } catch { res.writeHead(404); res.end("not found"); return; }
-    if (roots.length > 0) {
+    if (roots.length > 0) {  // read 端点 fail-open(roots=[] 放行)——见 servePreview 同款注释
         const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
         if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) { res.writeHead(403); res.end("outside workspace"); return; }
     }
+    const ff = await findFfmpeg();  // 0.5.12🟡异步:不阻塞 EH
+    if (!ff || res.writableEnded) { if (!res.writableEnded) { res.writeHead(404); res.end("no ffmpeg"); } return; }  // 无 ffmpeg→404(静默 hidePopup);或探测期间客户端已断开
     const isAudio = type === "audio";
-    // video→fMP4(libx264 ultrafast zerolatency,fragmented MP4 可流式 pipe);audio→WAV(PCM 近零成本)
+    // video→fMP4(libx264 ultrafast zerolatency + frag_keyframe+empty_moov 流式 pipe);audio→WAV(PCM 近零成本)。movflags 错token 根因见 test-transcode-args.mjs
     const args = isAudio
         ? ["-i", realPath, "-f", "wav", "-c:a", "pcm_s16le", "-"]
-        : ["-i", realPath, "-f", "mp4", "-movflags", "frag+emptymoov+default_base_moof", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-c:a", "aac", "-"];
+        : ["-i", realPath, "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-c:a", "aac", "-"];
+    let ffmpeg;
+    try { ffmpeg = spawn(ff, args, { stdio: ["ignore", "pipe", "pipe"] }); }
+    catch { res.writeHead(500); res.end("spawn failed"); return; }
+    let headersSent = false;
+    let stderrBuf = "";
+    ffmpeg.stderr?.on("data", (d: Buffer) => { if (stderrBuf.length < 800) stderrBuf += d.toString(); });
+    ffmpeg.on("error", () => { try { if (!headersSent) { headersSent = true; res.writeHead(500); res.end("ffmpeg error"); } else res.end(); } catch { /* ignore */ } });
+    ffmpeg.on("close", (code: number) => { if (code !== 0) console.error(`[mp] ffmpeg exited ${code} (${path.basename(realPath)}): ${stderrBuf.slice(0, 400)}`); });
     res.writeHead(200, { "Content-Type": isAudio ? "audio/wav" : "video/mp4", "Cache-Control": "no-store" });
-    const ffmpeg = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "ignore"] });
+    headersSent = true;
     ffmpeg.stdout.pipe(res);
-    ffmpeg.on("error", () => { try { res.end(); } catch (e) { /* ignore */ } });
-    req.on("close", () => { try { ffmpeg.kill("SIGTERM"); } catch (e) { /* ignore */ } });  // 客户端断开 → 杀 ffmpeg 防僵尸
+    req.on("close", () => { try { ffmpeg.kill("SIGKILL"); } catch { /* ignore */ } });
 }

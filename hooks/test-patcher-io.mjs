@@ -29,9 +29,14 @@ function setup() {
     const wb = join(outDir, ...WB_SEGS);
     writeFileSync(wb, `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data: blob:; media-src https:; script-src 'self' blob:; style-src 'self' 'unsafe-inline';"></head><body></body></html>`);
     writeFileSync(join(app, "product.json"), JSON.stringify({ version: "1.129.1-test", checksums: { [WB_REL]: "STALE" } }));
+    // 0.5.10: 主进程 autoplay 补丁 fixture（package.json main 字段 = 源真相 + pristine main.js）
+    writeFileSync(join(app, "package.json"), JSON.stringify({ main: "./out/main.js" }));
+    const mainJs = join(outDir, "main.js");
+    writeFileSync(mainJs, `"use strict";\n// VSCode main bootstrap (fixture)\nconsole.log("main");\n`);
+    const pristineMain = readFileSync(mainJs);  // 字节级还原基准
     writeFileSync(join(install, "mp-overlay.js"), `/*mp-overlay:${INJECT_VER}:abcdef12*/\nconsole.log("test");`);  // 合法 banner（detectAndPatch 提取 8hex hash）
     writeFileSync(join(install, "mp-token.json"), JSON.stringify({ token: "testtoken" }));
-    return { app, install, wb };
+    return { app, install, wb, mainJs, pristineMain };
 }
 function runPatcher(app, install, args = ["--patch-only"]) {
     const r = spawnSync(process.execPath, [PATCHER, ...args], {
@@ -42,10 +47,18 @@ function runPatcher(app, install, args = ["--patch-only"]) {
 
 // [1] absent → patched + checksum 顺序
 console.log("[1/3] absent → patched + checksums[wbKey]===recompute ...");
-const { app, install, wb } = setup();
+const { app, install, wb, mainJs, pristineMain } = setup();
 runPatcher(app, install);
 let wbContent = readFileSync(wb, "utf8");
 if (!wbContent.includes(`<!--mp-injected:${INJECT_VER}:`)) fail("absent→patch 后 marker 缺失");
+// 0.5.11: main.js 不再注入 autoplay(特性废弃)→ 应保持 pristine 无 marker
+const mainContent = readFileSync(mainJs, "utf8");
+if (mainContent.includes("mp-main-injected")) fail("main.js 不应含 autoplay marker（0.5.11 废弃注入,应 pristine）");
+// 清理 strip 守门:伪造 0.5.10 残留 marker → 重跑 patcher → 应被 strip 字节还原(迁移已 patch 机器)
+writeFileSync(mainJs, `/*!mp-main-injected:v0.28.3*/\ntry{require("electron").app.commandLine.appendSwitch("autoplay-policy","no-user-gesture-required");}catch(e){}\n/*!/mp-main-injected*/\n` + mainContent);
+runPatcher(app, install);
+if (readFileSync(mainJs, "utf8").includes("mp-main-injected")) fail("main.js 残留 autoplay marker 未被 strip 清理");
+if (!pristineMain.equals(readFileSync(mainJs))) fail("main.js 清理后非 byte-identical 于 pristine（strip 应字节级还原）");
 const product = JSON.parse(readFileSync(join(app, "product.json"), "utf8"));
 if (product.checksums[WB_REL] !== recompute(wb)) fail(`checksum 不匹配：product=${product.checksums[WB_REL]} ≠ recompute=${recompute(wb)}（★ 顺序 bug：checksum 必须在 workbench 写盘后算）`);
 // ★ token 一致性守门（2026-08-09 真机 403 回归根因）：mp-config.js（overlay 读）的 token 必须等于
@@ -57,9 +70,11 @@ if (!mpConfig.includes(`"token":"${tokenJson}"`)) fail(`mp-config token ≠ mp-t
 // [2] fresh → no-op byte-identical
 console.log("[2/3] fresh → no-op byte-identical（marker 版本匹配则不重写）...");
 const before = readFileSync(wb);
+const mainBefore = readFileSync(mainJs);
 runPatcher(app, install);
 const after = readFileSync(wb);
 if (!before.equals(after)) fail("fresh 重跑 workbench.html 非 byte-identical（fresh 应 no-op，仅 bake mp-config 不碰 workbench）");
+if (!mainBefore.equals(readFileSync(mainJs))) fail("fresh 重跑 main.js 非 byte-identical（stripMainAutoplay 干净后应 no-op）");
 
 // [3] stale → re-patch + revert 还原 pristine
 console.log("[3/3] stale → re-patch + revert 还原 pristine ...");
@@ -69,6 +84,8 @@ runPatcher(app, install);
 if (!readFileSync(wb, "utf8").includes(`<!--mp-injected:${INJECT_VER}:`)) fail("stale 未 re-patch（marker 仍旧版本）");
 runPatcher(app, install, ["--revert"]);
 if (readFileSync(wb, "utf8").includes("<!--mp-injected:")) fail("revert 后 workbench 仍含 marker（未还原 pristine 备份）");
+if (readFileSync(mainJs).includes("mp-main-injected")) fail("revert 后 main.js 仍含 autoplay marker（未 strip）");
+if (!pristineMain.equals(readFileSync(mainJs))) fail("revert 后 main.js 非 byte-identical 于 pristine（strip 应字节级还原,只 prepend 故可逆）");
 
 try { rmSync(app, { recursive: true, force: true }); rmSync(install, { recursive: true, force: true }); } catch { /* ignore */ }
 if (fails) { console.error(`\nFAIL: test-patcher-io（${fails} 处）`); process.exit(1); }

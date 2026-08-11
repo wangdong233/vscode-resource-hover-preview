@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writeAtomicSync } from "./atomic.js";  // 0.5.12🟡:product.json 原子写(原 writeFileSync 半写→VSCode 启动 JSON parse 失败→整 app 不启)
 
 // SHA256 → base64 → 去结尾 = （VSCode checksumService.ts:21,26 算法）
 export function recomputeChecksum(absPath: string): string {
@@ -20,7 +21,7 @@ export function patchProductChecksums(productJsonPath: string, baseOutDir: strin
         if (!fs.existsSync(abs)) continue; // 文件不存在（新版本删除）→ 跳过不报错
         product.checksums[relKey] = recomputeChecksum(abs);
     }
-    fs.writeFileSync(productJsonPath, JSON.stringify(product, null, "\t"), "utf8"); // tab 缩进对齐 VSCode product.json 原格式
+    writeAtomicSync(productJsonPath, JSON.stringify(product, null, "\t")); // 0.5.12🟡:原子写(.tmp+rename,与全代码库范式一致)。tab 缩进对齐 VSCode product.json 原格式
 }
 
 // 由 workbench.html 绝对路径推 checksum key（去 out/ 前缀，如 vs/code/electron-browser/workbench/workbench.html）

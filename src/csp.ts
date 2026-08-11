@@ -3,7 +3,7 @@
 // 用 \2 闭 http-equiv 引号、\3 闭 content 引号，[\s\S]*? 跨行捕 CSP 内容（CSP meta 是多行）。
 const CSP_META_RE = /(<meta\b[^>]*?\bhttp-equiv\s*=\s*(["'])Content-Security-Policy\2[^>]*?\bcontent\s*=\s*(["']))([\s\S]*?)(\3)/i;
 
-const TOKEN = " http://127.0.0.1:*"; // 通配端口（server 递增 17741→17742...，配套）
+const TOKEN = " http://127.0.0.1:*"; // 通配端口(port 固定 17741,test-contract-sync 闸门钉;通配 * 兼容 CSP 通配规则)
 
 // surgical patch：connect-src/img-src/media-src 各追加 token（media-src 再加 blob:）
 export function patchCsp(html: string): string {
@@ -18,9 +18,9 @@ export function patchCsp(html: string): string {
 
 // 在 directive 段追加 token（幂等：已含则跳过，防重 patch 叠加多个 token）
 function injectCspDirective(csp: string, directive: string, token: string): string {
-    const segRe = new RegExp(`(${directive}\\s+)([^;]*?)(\\s*;)`, "i");
+    const segRe = new RegExp(`(${directive}\\s+)([^;]*?)(\\s*;|$)`, "i");  // 0.5.12🟡修:;|$ 兜底 EOL(原仅 \\s*; → directive 在末尾无分号时 sm=null 静默 no-op → CSP 未改 → fetch 全断无错线索,patch 仍报成功)
     const sm = csp.match(segRe);
-    if (!sm) return csp; // directive 不存在 → 不动（保守）
+    if (!sm) { console.warn(`[mp] CSP 指令 ${directive} 未找到 → 未注入 ${token.trim()}(对应资源 fetch 可能被拦)`); return csp; }  // 0.5.12🟡:暴露静默失败(directive 缺失的合法跳过也要可观测)
     if (sm[2].includes(token.trim())) return csp; // 已含 → 幂等跳过
     return csp.replace(segRe, (_full, a, b, c) => a + b + token + c);
 }

@@ -4,15 +4,15 @@ import fs from "node:fs";
 // 原子写（写 .tmp + rename，防 VSCode 启动期读到半写文件）
 export function writeAtomicSync(filePath: string, content: string): void {
     const tmp = filePath + ".mp.tmp";
-    fs.writeFileSync(tmp, content, "utf8");
-    fs.renameSync(tmp, filePath);
+    try { fs.writeFileSync(tmp, content, "utf8"); fs.renameSync(tmp, filePath); }
+    finally { try { if (fs.existsSync(tmp)) fs.rmSync(tmp); } catch { /* ignore */ } }  // 0.5.12🔵:失败/成功后清 .tmp(原 rename 失败残留污染目录)
 }
 
 // 原子复制（overlay.js/mp-config.js 落盘）
 export function atomicCopyFileSync(src: string, dest: string): void {
     const tmp = dest + ".mp.tmp";
-    fs.copyFileSync(src, tmp);
-    fs.renameSync(tmp, dest);
+    try { fs.copyFileSync(src, tmp); fs.renameSync(tmp, dest); }
+    finally { try { if (fs.existsSync(tmp)) fs.rmSync(tmp); } catch { /* ignore */ } }
 }
 
 // 版本化备份（已存在不覆盖）。

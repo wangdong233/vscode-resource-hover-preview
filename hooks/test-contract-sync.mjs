@@ -63,7 +63,7 @@ const cssClasses = new Set([...cssBlock.matchAll(/\.([a-zA-Z][\w-]*)/g)].map(m =
 const jsRefClasses = new Set();
 for (const m of overlay.matchAll(/classList\.(?:toggle|add|remove|contains)\(["']([^"']+)["']\)/g)) jsRefClasses.add(m[1]);
 for (const m of overlay.matchAll(/querySelector(?:All)?\(["']\.([^.#[\s"']+)["']\)/g)) jsRefClasses.add(m[1]);
-const OUR_STATE = new Set(["is-pinned", "rail-left"]);  // 非 mp- 前缀的自定义状态类
+const OUR_STATE = new Set(["is-pinned", "is-dragging", "rail-left"]);  // 非 mp- 前缀的自定义状态类(0.5.13 复审 H-1:补 is-dragging,否则 CSS-class 闸门⑤对其 continue 跳过→失效)
 for (const c of jsRefClasses) {
     if (!c.startsWith("mp-") && !OUR_STATE.has(c)) continue;  // 跳过外部 VSCode class（explorer-viewlet/monaco-*/part.sidebar）
     if (!cssClasses.has(c)) fail(`JS 行为引用 class ".${c}" 在 CSS 块无对应规则（typo 或漏 CSS）`);
@@ -75,5 +75,14 @@ console.log("[6/6] await fetch().X() 优先级 bug 守门 ...");
 const badFetch = overlay.match(/await\s+fetch\([^)]*\)\.(arrayBuffer|text|json|blob)\s*\(/g);
 if (badFetch) for (const b of badFetch) fail(`await fetch().X() 优先级 bug（应 await (await fetch()).X() 或 .then）：${b}`);
 
+// ⑦ NATIVE_VIDEO/NATIVE_AUDIO ⊆ *_EXTS（0.5.12:防死分支——原 NATIVE_VIDEO 含 ogg,但 detectMediaType 路由 .ogg→audio,AUDIO 优先 → NATIVE_VIDEO 的 ogg 永不生效=死分支）
+console.log("[7/7] NATIVE_VIDEO/AUDIO ⊆ *_EXTS(防死分支) ...");
+const nativeVideo = extractArr(overlay, /var NATIVE_VIDEO\s*=\s*\[([^\]]+)\]/) || [];
+const nativeAudio = extractArr(overlay, /var NATIVE_AUDIO\s*=\s*\[([^\]]+)\]/) || [];
+const videoExts7 = extractArr(overlay, /var VIDEO_EXTS\s*=\s*\[([^\]]+)\]/) || [];
+const audioExts7 = extractArr(overlay, /var AUDIO_EXTS\s*=\s*\[([^\]]+)\]/) || [];
+for (const e of nativeVideo) if (!videoExts7.includes(e)) fail(`NATIVE_VIDEO 含 "${e}" ∉ VIDEO_EXTS → 死分支(detectMediaType 不路由 .${e}→video)`);
+for (const e of nativeAudio) if (!audioExts7.includes(e)) fail(`NATIVE_AUDIO 含 "${e}" ∉ AUDIO_EXTS → 死分支`);
+
 if (fails) { console.error(`\nFAIL: test-contract-sync（${fails} 处跨边界同步失配）`); process.exit(1); }
-console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class + fetch优先级 全同步）");
+console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class + fetch优先级 + NATIVE⊆EXTS 全同步）");

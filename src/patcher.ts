@@ -87,15 +87,27 @@ function installRuntimeFiles(): void {
 function installCompanion(): void {
     const vsix = findVsix();
     if (!vsix) { console.error("[mp] 未找到 .vsix，请先 npm run companion:package"); return; }
-    const codeBin = (process.env.PATH?.split(path.delimiter).some(p => fs.existsSync(path.join(p, "code")))) ? "code" : "/usr/local/bin/code";  // v0.1审查🟡：Win 分隔符 ';'
+    const codeExe = process.platform === "win32" ? "code.cmd" : "code";  // 0.5.12🟡:Win 用 code.cmd(原仅查 code → Win PATH 不命中 → fallback macOS 路径 → ENOENT 静默失败)
+    const codeBin = (process.env.PATH?.split(path.delimiter).some(p => fs.existsSync(path.join(p, codeExe)))) ? codeExe : "/usr/local/bin/code";
     console.log(`[mp] code --install-extension ${vsix}`);
     const r = spawnSync(codeBin, ["--install-extension", vsix], { stdio: "inherit" });
     console.log(`[mp] install-extension exit ${r.status}`);
 }
 
+// ===== main.js autoplay 残留清理【0.5.11 废弃该特性,仅保留 strip】=====
+// 0.5.10 曾注入 appendSwitch 关 autoplay(音频有声);0.5.11 用户决定音频不 autoplay(只显浮窗用户手点 play 更可靠),
+//   故移除注入,仅 strip 清理已 patch 机器的残留 marker(幂等:main.js 干净后 no-op 读+跳过)。
+const MAIN_MARKER_RE = /\/\*!mp-main-injected:[\s\S]*?\/\*!\/mp-main-injected\*\/\n?/g;
+function stripMainAutoplay(mainJsPath: string): void {
+    if (!fs.existsSync(mainJsPath)) return;
+    const src = fs.readFileSync(mainJsPath, "utf8");
+    const stripped = src.replace(MAIN_MARKER_RE, "");
+    if (stripped !== src) { writeAtomicSync(mainJsPath, stripped); console.log("[mp] main.js 残留 autoplay marker 已清理（0.5.11 废弃音频 autoplay 特性）"); }  // 字节级还原
+}
+
 // ===== detectAndPatch（--patch-only / 默认 都用）：编排，顺序关键 =====
 async function detectAndPatch(install: Install, fixedToken: string): Promise<"fresh" | "patched" | "failed"> {
-    const { workbenchHtmlPath, productJsonPath, outDir, appDir } = install;
+    const { workbenchHtmlPath, productJsonPath, outDir, appDir, mainJsPath } = install;
     return withLock(appDir, async () => {
         const html = fs.readFileSync(workbenchHtmlPath, "utf8");
         const { state } = readWorkbenchState(html);
@@ -106,6 +118,8 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
             writeAtomicSync(path.join(path.dirname(workbenchHtmlPath), "mp-config.js"),
                 buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));
         }
+        // 0.5.11: main.js autoplay 残留清理（0.5.10 废弃特性的迁移 strip,幂等）
+        try { stripMainAutoplay(mainJsPath); } catch (e) { console.warn(`[mp] main.js strip skipped: ${(e as Error).message}`); }
         if (state === "fresh") {
             // v0.1审查🔵：fresh 也校验 mp-overlay.js + mp-three.js 存在（被删则补拷，否则 script 404 静默死）
             const wbDir = path.dirname(workbenchHtmlPath);
@@ -121,8 +135,9 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
         try { fs.accessSync(workbenchHtmlPath, fs.constants.W_OK); }
         catch { console.error(`[mp] 无写权限: ${workbenchHtmlPath}。请: sudo chown -R $(whoami) '<appRoot>'`); return "failed"; }
 
-        const ver = JSON.parse(fs.readFileSync(productJsonPath, "utf8")).version;  // hoist 到 try 外（catch 要用，v0.1审查🔴修）
+        let ver: string | undefined;  // 0.5.12🟡:ver 读入 try(原在 try 外——product.json 损坏时此行抛→冒泡 withLock→无 rollback→workbench 未备份留错态)
         try {
+            ver = JSON.parse(fs.readFileSync(productJsonPath, "utf8")).version;
             backupIfAbsent(workbenchHtmlPath, `${workbenchHtmlPath}.mp.bak.${ver}`);
             backupIfAbsent(productJsonPath, `${productJsonPath}.mp.bak.${ver}`);
 
@@ -148,12 +163,15 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
             const verifyHtml = fs.readFileSync(workbenchHtmlPath, "utf8");
             const product2 = JSON.parse(fs.readFileSync(productJsonPath, "utf8"));
             const wbKey = deriveChecksumKey(workbenchHtmlPath, outDir);
-            if (!verifyHtml.includes(`<!--mp-injected:${INJECT_VERSION}:`)) throw new Error("marker missing");
+            const markerM = verifyHtml.match(/<!--mp-injected:(v[\d.]+):([0-9a-f]+)-->/);  // 0.5.12🔵:完整 marker 校验(版本+hash,原仅 prefix includes 过弱)
+            if (!markerM || markerM[1] !== INJECT_VERSION || markerM[2] !== overlayHash) throw new Error(`marker verify fail: ${markerM?.[0] ?? "missing"}`);
             if (product2.checksums[wbKey] !== recomputeChecksum(workbenchHtmlPath)) throw new Error("checksum mismatch");
             return "patched";
         } catch (e) {
-            rollbackFromBak(`${workbenchHtmlPath}.mp.bak.${ver}`, workbenchHtmlPath);  // 版本化名（v0.1审查🔴修：与 backup 一致）
-            rollbackFromBak(`${productJsonPath}.mp.bak.${ver}`, productJsonPath);
+            if (ver) {  // 0.5.12🟡:ver 读到才回滚(未读到则 bak 名含 undefined 无意义)
+                rollbackFromBak(`${workbenchHtmlPath}.mp.bak.${ver}`, workbenchHtmlPath);  // 版本化名（v0.1审查🔴修：与 backup 一致）
+                rollbackFromBak(`${productJsonPath}.mp.bak.${ver}`, productJsonPath);
+            }
             console.error(`[mp] patch failed: ${(e as Error).message}`);
             return "failed";
         }
@@ -163,10 +181,11 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
 // ===== --revert =====
 function runRevert(installs: Install[]): void {
     for (const inst of installs) {
-        const { workbenchHtmlPath, productJsonPath } = inst;  // 仅用此二者（审查 2.6 noUnusedLocals）
+        const { workbenchHtmlPath, productJsonPath, mainJsPath } = inst;  // 仅用此三者（审查 2.6 noUnusedLocals）
         try {
             rollbackVersionedBak(workbenchHtmlPath);  // glob .mp.bak.* 还原（v0.1审查🔴修：revert 版本化名）
             rollbackVersionedBak(productJsonPath);
+            stripMainAutoplay(mainJsPath);  // 0.5.11: strip main.js autoplay 残留 marker（字节级还原）
             const overlayDest = path.join(path.dirname(workbenchHtmlPath), "mp-overlay.js");
             if (fs.existsSync(overlayDest)) fs.rmSync(overlayDest);
             const cfgDest = path.join(path.dirname(workbenchHtmlPath), "mp-config.js");

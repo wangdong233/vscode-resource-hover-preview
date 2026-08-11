@@ -1,6 +1,6 @@
 {
   "name": "vscode-resource-hover-preview",
-  "version": "0.5.6",
+  "version": "0.5.14",
   "description": "VSCode 资源管理器悬停浮动预览（图片/视频/字体/音频/3D）",
   "type": "module",
   "bin": {
@@ -16,7 +16,7 @@
     "patch": "tsx src/patcher.ts",
     "revert": "tsx src/patcher.ts --revert",
     "status": "tsx src/patcher.ts --status",
-    "test": "node hooks/test-overlay-hash.mjs && node hooks/test-contract-sync.mjs && node hooks/test-patcher-io.mjs"
+    "test": "node hooks/test-overlay-hash.mjs && node hooks/test-contract-sync.mjs && node hooks/test-patcher-io.mjs && node hooks/test-transcode-args.mjs && node hooks/test-no-stale-dist.mjs"
   },
   "engines": {
     "node": ">=18"
