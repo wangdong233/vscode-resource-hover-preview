@@ -34,7 +34,11 @@
 
 **⑤ Pin & Drag**　Click 📌 to pin the popup (won't disappear when mouse leaves); once pinned, image/font popups can be dragged anywhere for easy side-by-side reference.
 
-**⑥ 5 Types Covered**　🖼️ Images (png/jpg/gif/webp/svg/bmp/ico/avif) · 🎬 Videos (mp4/webm/mov/mkv/avi/m4v/flv) · 🎵 Audio (mp3/wav/ogg/flac/aac/m4a/opus/aiff) · 🔤 Fonts (ttf/otf/woff/woff2) · 🎲 3D (glb/gltf/obj/stl/fbx)
+**⑥ Wheel Zoom & Pan**　Scroll or pinch inside the popup to zoom around the cursor (up to 1000×); drag to pan when zoomed; double-click or the toolbar button resets.
+
+**⑦ Quick Rename**　Click the filename above the popup to rename (name selected, extension kept).
+
+**⑧ 5 Types Covered**　🖼️ Images (png/jpg/gif/webp/svg/bmp/ico/avif) · 🎬 Videos (mp4/webm/mov/mkv/avi/m4v/flv) · 🎵 Audio (mp3/wav/ogg/flac/aac/m4a/opus/aiff) · 🔤 Fonts (ttf/otf/woff/woff2) · 🎲 3D (glb/gltf/obj/stl/fbx)
 
 ---
 

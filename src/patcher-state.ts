@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.28.15"; // bump:0.5.23 复审出库 C1-C6——🔴disposeContent 重置 zoom 载体(换图假按钮假光标)/stopPan 对偶+pApply 守卫/注释[1,ZOOM_MAX]/OUR_STATE 补类/gap2 类驱动显隐/reference 同步
+export const INJECT_VERSION = "v0.28.16"; // bump:0.5.24 全项目双审 BLOCK 修复——R1 stopPan 作用域(关闭钮失效)/R2 媒体摘除 pause+断src/Y1 URL try/Y2 isFile+stream error/Y8 reset 复夹紧/Y9 3D 入口置 type/Y13 drag 重入门/B4 spawnPatcher 三件套 + 第8闸门 renderer 执行 harness
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;

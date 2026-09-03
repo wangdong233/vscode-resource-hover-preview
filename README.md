@@ -34,7 +34,11 @@
 
 **⑤ Pin 固定**　点 📌 固定弹窗（不随鼠标离开消失），固定后图片/字体浮窗可拖动到任意位置，方便对照参考。
 
-**⑥ 5 类型全覆盖**　🖼️ 图片(png/jpg/gif/webp/svg/bmp/ico/avif) · 🎬 视频(mp4/webm/mov/mkv/avi/m4v/flv) · 🎵 音频(mp3/wav/ogg/flac/aac/m4a/opus/aiff) · 🔤 字体(ttf/otf/woff/woff2) · 🎲 3D(glb/gltf/obj/stl/fbx)
+**⑥ 滚轮缩放与平移**　浮窗内滚轮/双指捏合以光标为中心缩放（最高 1000×），放大后可拖拽平移，双击或工具栏一键复原。
+
+**⑦ 一键改名**　点击浮窗上方文件名直接重命名（自动选中文件名、保留后缀）。
+
+**⑧ 5 类型全覆盖**　🖼️ 图片(png/jpg/gif/webp/svg/bmp/ico/avif) · 🎬 视频(mp4/webm/mov/mkv/avi/m4v/flv) · 🎵 音频(mp3/wav/ogg/flac/aac/m4a/opus/aiff) · 🔤 字体(ttf/otf/woff/woff2) · 🎲 3D(glb/gltf/obj/stl/fbx)
 
 ---
 

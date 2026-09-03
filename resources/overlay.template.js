@@ -12,7 +12,6 @@
     var TOKEN = cfg.token;
     var HOVER_DELAY = 300, HIDE_DELAY = 200, MEDIA_HIDE_DELAY = 400;  // 0.5.20(S2/S5):视频/音频弹窗隐藏延时加长——用户从 explorer 移向底部音量控件需跨 popup 主体,200ms 窗太紧
 function hideDelayMs() { return (activeRendererType === "video" || activeRendererType === "audio") ? MEDIA_HIDE_DELAY : HIDE_DELAY; }
-    var SIZE_KEY = "mp.popupSize";
     var isPinned = false;
     var isDragging = false;  // 0.5.13: pin 态浮窗拖动中标志(root mousemove 早退防 currentHovered 漂移 + pinBtn unpin 强制终止用)
     var isPanning = false;   // 0.5.22: 缩放图平移中标志(三处 hideTimer fire-time 守卫防 pan 中弹窗被销毁 + root mousemove/wheel 让出)
@@ -275,6 +274,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         //   → video/audio/3D pin 态【无可拖区】(媒体填满浮窗),仅 pin 锁定内容不随 hover 变;image/font 可拖。维持现状不追加 drag handle(产品决策,非 bug)。
         var DRAG_SKIP = ".mp-resize,.mp-rail,.mp-fname,video,audio,button,input,a,[contenteditable]";
         var dragPointerId = null, onDragMove = null, onDragUp = null;
+        var stopPan = function () { isPanning = false; popup.classList.remove("is-panning"); };  // 0.5.24🔴R1修:提升到 bindInteractions 作用域(原声明在 pointerdown 回调内,closeBtn 层引用即 ReferenceError——关闭按钮整体失效,0.5.23 自身回归;与 stopDrag 对称的 pan 强制清理)
         function stopDrag() {  // unpin/close 强制终止可能进行中的拖动(capture 路由下 click 可能不触发,须主动清)
             if (!isDragging) return;
             if (onDragMove) { popup.removeEventListener("pointermove", onDragMove); popup.removeEventListener("pointerup", onDragUp); popup.removeEventListener("pointercancel", onDragUp); }
@@ -317,7 +317,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         // 0.5.13: pin 态拖动——pointerdown 落在背景(非 DRAG_SKIP 交互子元素 / 非 3D canvas)才启动
         popup.addEventListener("pointerdown", function (e) {
             if (e.button !== 0) return;  // 仅左键
-            var stopPan = function () { isPanning = false; popup.classList.remove("is-panning"); };  // 0.5.23🟡-1:pan 强制清理对偶(与 stopDrag 对称;closeBtn/未来 Esc 路径下 img 被摘则 pointerup 永不派发→isPanning 卡 true 假死)
+            if (isDragging || isPanning) return;  // 0.5.24 Y13:重入门(第二指针触屏可达——无条件覆盖共享句柄致监听器残留"跟鼠假死")
             // 0.5.22 pan:图片已缩放(s>1)且按在 img 上 → 平移图片内容(优先于 pin 拖浮窗;未 pin 也可;背景/letterbox 仍走下方 pin 拖浮窗)
             if (activeRendererType === "image" && e.target.tagName === "IMG" && e.target._mpZoom && e.target._mpZoom.s > 1) {
                 var pimg = e.target;
@@ -460,6 +460,11 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             else if (vid && vid.videoWidth) fitPopupToContent(vid.videoWidth, vid.videoHeight);
             else { popup.style.width = "400px"; popup.style.height = "300px"; }
         }
+        // 0.5.24 Y8:复位后视口夹紧(原直设尺寸无重定位——右下角小窗 reset 放大即溢出不可达;刻度对齐 placePopup 8/28/8)
+        var vw2 = window.innerWidth, vh2 = window.innerHeight, w2 = popup.offsetWidth, h2 = popup.offsetHeight;
+        var cl = parseFloat(popup.style.left), ct = parseFloat(popup.style.top);
+        if (!isNaN(cl)) popup.style.left = Math.max(8, Math.min(cl, vw2 - w2 - 8)) + "px";
+        if (!isNaN(ct)) popup.style.top = Math.max(28, Math.min(ct, vh2 - h2 - 8)) + "px";
     }
     function hidePopup() {
         renderEpoch++;  // 0.5.12🟡修:bump 代际→in-flight render3DFull 的 ep 守卫作废,防 popup 已隐藏但其 rAF 动画循环继续空转耗 GPU(3D 资源隐性泄漏)
@@ -475,6 +480,10 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         // v0.2-v0.5审查🟡：按 type 路由 dispose（防 FontFace/PDF worker/geometry 累积）
         if (activeRendererType === "3d" && typeof dispose3D === "function") dispose3D();
         else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
+        else if (activeRendererType === "video" || activeRendererType === "audio") {  // 0.5.24🔴R2修:摘除的播放媒体继续出声/继续拉 /transcode 流——pause+断 src+load() 释放解码器与网络(单清理点对齐 3d/font 范式)
+            var dMed = document.querySelector("#mp-popup .mp-content video, #mp-popup .mp-content audio");
+            if (dMed) { try { var p = dMed.pause(); if (p && p.catch) p.catch(function () {}); dMed.removeAttribute("src"); dMed.load(); } catch (e) { /* ignore */ } }
+        }
         activeRendererType = null;
     }
     function disposeActiveRenderer() { disposeContent(); }  // handleHover 前/切类型时调
@@ -728,6 +737,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         content.appendChild(card);
     }
     async function render3D(filePath, ep, rect) {
+        activeRendererType = "3d";  // 0.5.24 Y9:入口前置(大卡/加载窗口期 resize 曾落死键 default、resetBtn 走错分支、hideDelayMs 非 media 档)
         var T = await waitForThree();
         if (ep !== renderEpoch) return;
         var p3d = document.getElementById("mp-popup");

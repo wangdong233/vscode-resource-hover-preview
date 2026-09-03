@@ -77,7 +77,10 @@ function spawnPatcher(args: string[], output: vscode.OutputChannel) {
     if (!fs.existsSync(PATCH_JS)) { vscode.window.showWarningMessage(`patcher not found: ${PATCH_JS}`); return; }
     const child = cp.spawn(findNodeBin(), [PATCH_JS, ...args], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
     const out: string[] = []; child.stdout?.on("data", d => out.push(d.toString()));
-    child.on("close", () => output.appendLine(out.join("").trim()));
+    const err: string[] = []; child.stderr?.on("data", d => err.push(d.toString()));  // 0.5.24 B4:对齐 runPatcher 三件套(原无 error handler→ENOENT unhandled 崩;无超时;无 stderr)
+    const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch { /* ignore */ } }, 30000);
+    child.on("error", er => { clearTimeout(timer); output.appendLine("[spawn error] " + er.message); });
+    child.on("close", () => { clearTimeout(timer); output.appendLine(out.join("").trim()); if (err.length) output.appendLine("[stderr] " + err.join("").trim()); });
 }
 
 // ELECTRON_RUN_AS_NODE 让 Electron execPath 退化为 Node（VSCode spawn EH 的同款 trick）

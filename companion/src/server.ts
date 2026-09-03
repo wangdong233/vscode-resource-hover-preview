@@ -51,13 +51,14 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     if (origin && !ALLOWED_ORIGIN.test(origin)) { res.writeHead(403); res.end("forbidden origin"); return; }
     if (origin) { res.setHeader("Access-Control-Allow-Origin", origin); res.setHeader("Vary", "Origin"); }
 
-    const url = new URL(req.url || "/", "http://127.0.0.1");
+    let url: URL;
+    try { url = new URL(req.url || "/", "http://127.0.0.1"); }  // 0.5.24 Y1:畸形请求行曾抛 TypeError→uncaughtException 崩 EH(无 token 本地进程单次 TCP 写入即可)
+    catch { res.writeHead(400); res.end("bad request"); return; }
     if (url.pathname === "/ping") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true })); return; }  // 档3:overlay 探活(/transcode 按需 spawn ffmpeg,不在 ping 报状态——预检在 EH 模块加载期不可靠)
     // 闸门3：token（除 /ping）。空 token deny-all（v0.1审查🟡修：token='' 时 ''!=='' 为 false 会放行）
     if (!token || url.searchParams.get("token") !== token) { res.writeHead(403); res.end("forbidden token"); return; }
 
-    // 审查 3.3：/config 端点已删（overlay 用硬编码 EXTS + detectMediaType，从不 fetch /config；
-    //   version/mime/types 字段运行时全死）。TYPE_TABLE 保留（serveStream/serveImage 消费 + test-contract-sync 闸门）。
+    // 审查 3.3:/config 端点已删(overlay 用硬编码 EXTS + detectMediaType,从不 fetch /config)。
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
     if (url.pathname === "/rename") return serveRename(url, res, roots, onRenamed);  // 0.4.9 文件改名（overlay 文件名点击触发）
@@ -112,6 +113,7 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     }
     let stat: fs.Stats;
     try { stat = fs.statSync(realPath); } catch { res.writeHead(404); res.end("not found"); return; }  // 0.5.12🟡:TOCTOU(realpath→stat 间文件被删→抛 ENOENT→无状态码 socket hangup)
+    if (!stat.isFile()) { res.writeHead(404); res.end("not a file"); return; }  // 0.5.24 Y2:目录名 *.mp4 曾 EISDIR 崩 EH(detectMediaType 纯按扩展名)
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
     if (type === "image") return serveImage(realPath, req, res, stat);
     if (type === "video" || type === "audio" || type === "3d" || type === "font") return serveStream(realPath, type, req, res, stat);
@@ -137,6 +139,10 @@ function mimeForFile(filePath: string, type: string): string {
     const ext = path.extname(filePath).slice(1).toLowerCase();
     return MIME_BY_EXT[ext] || (type === "video" ? "video/mp4" : type === "audio" ? "audio/mpeg" : "application/octet-stream");
 }
+function streamOut(src: fs.ReadStream, res: http.ServerResponse): void {  // 0.5.24 Y2:pipe 不转发 src error——ENOENT/EISDIR 竞态窗曾 unhandled 崩 EH;统一挂 on(error)
+    src.on("error", () => { try { if (!res.destroyed) { res.destroy(); } } catch { /* ignore */ } });
+    src.pipe(res);
+}
 function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse, stat: fs.Stats) {
     const etag = etagOf(stat);  // 0.5.18:指纹随响应下发,新鲜度协商归 HTTP 层(原 max-age=300 无验证器=跨会话供旧唯一层)
     const mime = mimeForFile(file, type);
@@ -146,7 +152,7 @@ function serveStream(file: string, type: string, req: http.IncomingMessage, res:
         const ifRange = req.headers["if-range"];
         if (ifRange && ifRange !== etag) {
             res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag });
-            fs.createReadStream(file).pipe(res); return;
+            streamOut(fs.createReadStream(file), res); return;
         }
         const m = /^bytes=(\d+)-(\d*)$/.exec(range);
         if (!m) { res.writeHead(416); res.end("invalid range"); return; }
@@ -154,11 +160,11 @@ function serveStream(file: string, type: string, req: http.IncomingMessage, res:
         const end = Math.min(m[2] ? parseInt(m[2], 10) : stat.size - 1, stat.size - 1);
         if (start > end || start >= stat.size) { res.writeHead(416); res.end("unsatisfiable"); return; }
         res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, "Content-Type": mime, "Cache-Control": "no-cache", "ETag": etag });
-        fs.createReadStream(file, { start, end }).pipe(res);
+        streamOut(fs.createReadStream(file, { start, end }), res);
     } else {
         if (req.headers["if-none-match"] === etag) { res.writeHead(304, { "ETag": etag, "Cache-Control": "no-cache" }); res.end(); return; }  // 0.5.18:304 协商(零字节重传)
         res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag });  // no-cache=存储但每次协商(禁 max-age:同名覆盖跨会话供旧根因)
-        fs.createReadStream(file).pipe(res);
+        streamOut(fs.createReadStream(file), res);
     }
 }
 
@@ -169,7 +175,7 @@ function serveLib(url: URL, res: http.ServerResponse) {
     const libPath = path.join(__dirname, "..", "resources", "lib", name);
     try { if (!fs.statSync(libPath).isFile()) throw 0; } catch { res.writeHead(404); res.end("lib not found"); return; }  // 0.5.12🟡:statSync + catch(原 existsSync+statSync 双调用 TOCTOU + 冗余)
     res.writeHead(200, { "Content-Type": name.endsWith(".mjs") ? "text/javascript" : "application/octet-stream" });
-    fs.createReadStream(libPath).pipe(res);
+    streamOut(fs.createReadStream(libPath), res);
 }
 
 // 图片:异步读 + base64。0.5.18:ETag 协商(指纹由 servePreview 的 stat 传入,零新增 IO);max-age=300 已删=同名覆盖供旧根因

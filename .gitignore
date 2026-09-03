@@ -8,8 +8,12 @@ __mp-patcher.lock
 *.mp.tmp
 .DS_Store
 .devteam/
-doc/
-resources/lib/              # 构建产物（pdf.min.mjs/worker copy + three esbuild bundle），build:lib 生成
+# 构建产物(build:lib 生成;0.5.24 Y10:注释移独立行——行内注释使 ignore 规则失效)
+resources/lib/
+companion/resources/
 
 # spike 脚本产物（开发期临时 patch VSCode，不入库运行痕迹）
 # spike2.mjs / spike6.mjs 等脚本本身可入库（开发工具），但运行时改的 VSCode 文件不入库
+
+# 0.5.25:测试媒体与个人文档不入库(曾因 add -A 卷入致 GH001 大文件拒推;本地保留)
+doc/test/
