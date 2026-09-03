@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.28.7"; // bump 触发 re-patch：0.5.13 pin 后浮窗可拖动(grab 光标+pointer 拖动+越界夹紧+unpin 消失+位置不记忆) + 修 is-pinned 未同步根/currentHovered 拖动漂移两 latent bug
+export const INJECT_VERSION = "v0.28.15"; // bump:0.5.23 复审出库 C1-C6——🔴disposeContent 重置 zoom 载体(换图假按钮假光标)/stopPan 对偶+pApply 守卫/注释[1,ZOOM_MAX]/OUR_STATE 补类/gap2 类驱动显隐/reference 同步
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;

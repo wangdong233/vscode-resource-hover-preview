@@ -11,7 +11,7 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const ALLOWED_HOST = /^(127\.0\.0\.1|localhost|\[::1\]):(\d+)$/;
 const ALLOWED_ORIGIN = /^vscode-file:|^file:/;
 
-// 媒体类型→mime（serveStream/serveImage 消费；overlay 用本地 *_EXTS 双轨，per-type sync 由 test-contract-sync 闸门保证一致）
+// 媒体类型→exts(唯一运行时消费者=test-contract-sync 闸门钉一致性;实际 MIME 走下方 MIME_BY_EXT 按扩展名。0.5.19 纠注:原"serveStream/serveImage 消费"失实)
 export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
     image: { exts: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"], mime: "image/*" },
     video: { exts: ["mp4", "webm", "mov", "mkv", "avi", "m4v", "flv"], mime: "video/mp4" },  // 0.5: +flv
@@ -24,15 +24,16 @@ export const TYPE_TABLE: Record<string, { exts: string[]; mime: string }> = {
 
 export interface PreviewServer { server: http.Server; port: number; }  // 0.5.12🔵删 token(返回字段未被 consumer 读,extension 已持入参 token)
 
-export function startPreviewServer(token: string, roots: string[] = [], onRenamed?: (newPath: string) => void): PreviewServer {
-    const port = findPort(BASE_PORT);
+export function startPreviewServer(token: string, roots: string[] = [], onRenamed?: (newPath: string) => void, port: number = BASE_PORT): PreviewServer {
+    // 0.5.18:第 4 可选参 port 仅供测试密闭端口(传 0=临时端口);extension 调用点零改动,bake 契约 17741 与 test-contract-sync 闸门②不动
+    const actualPort = findPort(port);
     const server = http.createServer((req, res) => handle(req, res, token, roots, onRenamed));
     server.on("error", (e: NodeJS.ErrnoException) => {  // v0.1审查🟡修：防 EADDRINUSE 崩 EH
-        if (e.code === "EADDRINUSE") console.error(`[mp] port ${port} occupied`);
+        if (e.code === "EADDRINUSE") console.error(`[mp] port ${actualPort} occupied`);
         else throw e;
     });
-    server.listen(port, "127.0.0.1"); // ⚠️ 绝不 0.0.0.0
-    return { server, port };
+    server.listen(actualPort, "127.0.0.1"); // ⚠️ 绝不 0.0.0.0
+    return { server, port: actualPort };  // 0.5.19 注:传 port=0 时此值是请求值 0 非实际绑定端口——须读 server.address().port(唯一临时端口消费方 test-preview-freshness 已如此)
 }
 
 function findPort(base: number): number {
@@ -112,10 +113,17 @@ function servePreview(url: URL, req: http.IncomingMessage, res: http.ServerRespo
     let stat: fs.Stats;
     try { stat = fs.statSync(realPath); } catch { res.writeHead(404); res.end("not found"); return; }  // 0.5.12🟡:TOCTOU(realpath→stat 间文件被删→抛 ENOENT→无状态码 socket hangup)
     if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
-    if (type === "image") return serveImage(realPath, res);
-    if (type === "video" || type === "audio" || type === "3d" || type === "font") return serveStream(realPath, type, req, res);
+    if (type === "image") return serveImage(realPath, req, res, stat);
+    if (type === "video" || type === "audio" || type === "3d" || type === "font") return serveStream(realPath, type, req, res, stat);
     res.writeHead(400); res.end("unsupported type");
 }
+
+// 0.5.18 版本指纹:唯一真相源(五层里只有 server 能 stat 磁盘)。size+mtimeMs 强 ETag——不用 W/ 前缀:
+// 强验证器才会被 Chromium 用于 If-Range(206 分片一致性);碰撞=同尺寸+同毫秒覆盖,webpack 同款公式业界多年无事故。
+// 已知良性竞态:stat 与 readFile 间文件被换→该次响应 etag 旧/字节新,下一轮协商自愈(接受,勿加锁)。
+function etagOf(stat: fs.Stats): string { return '"' + stat.size + "-" + stat.mtimeMs + '"'; }
+// 0.5.19(G3)注:If-None-Match/If-Range 用全串 === 比对是【有意简化】——全库唯一 HTTP 客户端=Chromium(fetch+媒体栈,原样回放单一存储 etag),
+// 逗号列表/W/ 弱比较/* 通配(RFC 9110 §13.1.2)实际不可达,失配失败方向安全(→200 全量)。接入第二客户端前须补完整比较。
 
 // range stream（video/audio/3d/font，原生 Range seek，doc04 硬化）
 // MIME 按扩展名（档1 P0：原按 type 一刀切 audio/mpeg→FLAC/OGG/WAV 全错，靠 sniff 偶然工作）
@@ -129,21 +137,27 @@ function mimeForFile(filePath: string, type: string): string {
     const ext = path.extname(filePath).slice(1).toLowerCase();
     return MIME_BY_EXT[ext] || (type === "video" ? "video/mp4" : type === "audio" ? "audio/mpeg" : "application/octet-stream");
 }
-function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse) {
-    let stat: fs.Stats;
-    try { stat = fs.statSync(file); } catch { res.writeHead(404); res.end("not found"); return; }  // 0.5.12🟡 TOCTOU(stat 抛→socket hangup)
+function serveStream(file: string, type: string, req: http.IncomingMessage, res: http.ServerResponse, stat: fs.Stats) {
+    const etag = etagOf(stat);  // 0.5.18:指纹随响应下发,新鲜度协商归 HTTP 层(原 max-age=300 无验证器=跨会话供旧唯一层)
     const mime = mimeForFile(file, type);
     const range = req.headers.range;
     if (range) {
+        // 0.5.18 If-Range 守卫:缓存分片属旧版本(≠当前 etag)→弃 Range 回 200 全量,防旧分片与新字节拼接损坏
+        const ifRange = req.headers["if-range"];
+        if (ifRange && ifRange !== etag) {
+            res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag });
+            fs.createReadStream(file).pipe(res); return;
+        }
         const m = /^bytes=(\d+)-(\d*)$/.exec(range);
         if (!m) { res.writeHead(416); res.end("invalid range"); return; }
         const start = parseInt(m[1], 10);
         const end = Math.min(m[2] ? parseInt(m[2], 10) : stat.size - 1, stat.size - 1);
         if (start > end || start >= stat.size) { res.writeHead(416); res.end("unsatisfiable"); return; }
-        res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, "Content-Type": mime, "Cache-Control": "private, max-age=300" });
+        res.writeHead(206, { "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Accept-Ranges": "bytes", "Content-Length": end - start + 1, "Content-Type": mime, "Cache-Control": "no-cache", "ETag": etag });
         fs.createReadStream(file, { start, end }).pipe(res);
     } else {
-        res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=300" });  // Wave3 c：HTTP 缓存（video/audio 流式，不经 overlay blob 缓存）
+        if (req.headers["if-none-match"] === etag) { res.writeHead(304, { "ETag": etag, "Cache-Control": "no-cache" }); res.end(); return; }  // 0.5.18:304 协商(零字节重传)
+        res.writeHead(200, { "Content-Length": stat.size, "Content-Type": mime, "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag });  // no-cache=存储但每次协商(禁 max-age:同名覆盖跨会话供旧根因)
         fs.createReadStream(file).pipe(res);
     }
 }
@@ -158,13 +172,15 @@ function serveLib(url: URL, res: http.ServerResponse) {
     fs.createReadStream(libPath).pipe(res);
 }
 
-// 图片：异步读 + base64（v0.1 原图；大图缩放推迟）
-function serveImage(file: string, res: http.ServerResponse) {
+// 图片:异步读 + base64。0.5.18:ETag 协商(指纹由 servePreview 的 stat 传入,零新增 IO);max-age=300 已删=同名覆盖供旧根因
+function serveImage(file: string, req: http.IncomingMessage, res: http.ServerResponse, stat: fs.Stats) {
+    const etag = etagOf(stat);
+    if (req.headers["if-none-match"] === etag) { res.writeHead(304, { "ETag": etag, "Cache-Control": "no-cache" }); res.end(); return; }  // 304 只带验证器,无 body
     fs.readFile(file, (err, data) => {
         if (err) { res.writeHead(500); res.end("read error"); return; }
         const ext = path.extname(file).slice(1);
         const mime = "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext === "ico" ? "x-icon" : ext || "octet-stream");  // 0.5.12🔵:无扩展名兜底 octet-stream(原直拼得 "image/" 无效 MIME)
-        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache", "ETag": etag });  // no-cache=存储但每次协商(Chromium 自动 If-None-Match;fetch() 对 304 会用缓存副本重组完整 200,overlay 透明)
         res.end(JSON.stringify({ type: "image", mime, base64: data.toString("base64"), sizeBytes: data.length }));
     });
 }

@@ -63,7 +63,7 @@ const cssClasses = new Set([...cssBlock.matchAll(/\.([a-zA-Z][\w-]*)/g)].map(m =
 const jsRefClasses = new Set();
 for (const m of overlay.matchAll(/classList\.(?:toggle|add|remove|contains)\(["']([^"']+)["']\)/g)) jsRefClasses.add(m[1]);
 for (const m of overlay.matchAll(/querySelector(?:All)?\(["']\.([^.#[\s"']+)["']\)/g)) jsRefClasses.add(m[1]);
-const OUR_STATE = new Set(["is-pinned", "is-dragging", "rail-left"]);  // 非 mp- 前缀的自定义状态类(0.5.13 复审 H-1:补 is-dragging,否则 CSS-class 闸门⑤对其 continue 跳过→失效)
+const OUR_STATE = new Set(["is-pinned", "is-dragging", "is-panning", "img-zoomed", "rail-left"]);  // 0.5.23复审🟡-3:补 is-panning/img-zoomed(0.5.13 H-1 陷阱重演:闸门⑤对白名单外 continue 跳过)  // 非 mp- 前缀的自定义状态类(0.5.13 复审 H-1:补 is-dragging,否则 CSS-class 闸门⑤对其 continue 跳过→失效)
 for (const c of jsRefClasses) {
     if (!c.startsWith("mp-") && !OUR_STATE.has(c)) continue;  // 跳过外部 VSCode class（explorer-viewlet/monaco-*/part.sidebar）
     if (!cssClasses.has(c)) fail(`JS 行为引用 class ".${c}" 在 CSS 块无对应规则（typo 或漏 CSS）`);
@@ -83,6 +83,30 @@ const videoExts7 = extractArr(overlay, /var VIDEO_EXTS\s*=\s*\[([^\]]+)\]/) || [
 const audioExts7 = extractArr(overlay, /var AUDIO_EXTS\s*=\s*\[([^\]]+)\]/) || [];
 for (const e of nativeVideo) if (!videoExts7.includes(e)) fail(`NATIVE_VIDEO 含 "${e}" ∉ VIDEO_EXTS → 死分支(detectMediaType 不路由 .${e}→video)`);
 for (const e of nativeAudio) if (!audioExts7.includes(e)) fail(`NATIVE_AUDIO 含 "${e}" ∉ AUDIO_EXTS → 死分支`);
+
+// ⑧ 图片滚轮缩放契约(0.5.16复审🟡-2:本特性此前仅 node --check 语法覆盖;passive/门序/transform 序/复位配对/触底复位 全零断言——
+//   最现实高危 mutation 是 passive:false→true(DevTools"顺手优化"即中招,现象=缩放仍发生但 explorer 同步滚动+整窗缩放并发))
+console.log("[8/8] 图片滚轮缩放契约(passive:false + 门序 + transform 序 + 复位配对 + 触底复位)...");
+const wheelBlockM = overlay.match(/popup\.addEventListener\("wheel", function \(e\) \{[\s\S]*?\}, \{ passive: false \}\);/);
+if (!wheelBlockM) fail('wheel 监听块未找到或非 {passive:false}(passive:true → preventDefault 静默失效)');
+else {
+    const wb = wheelBlockM[0];
+    const pdIdx = wb.indexOf("e.preventDefault()");
+    if (pdIdx < 0) fail("wheel 块内 preventDefault 缺失");
+    for (const gate of ['activeRendererType !== "image"', "isDragging || isPanning || editing", "closest(ZOOM_SKIP)", "img.naturalWidth"]) {
+        const gi = wb.indexOf(gate);
+        if (gi < 0 || gi > pdIdx) fail(`wheel 门「${gate}」缺失或位于 preventDefault 之后(门序=保 3D/video 原生 wheel)`);
+    }
+    if (!/applyImgZoom\(img\);/.test(wb)) fail("wheel 未走 applyImgZoom(0.5.22 transform 单写者,与 pan 共用)");
+    const azM = overlay.match(/function applyImgZoom\(img\) \{[\s\S]*?\n    \}/);
+    if (!azM || !/transform = "translate\(" \+ z\.tx[\s\S]{0,80}scale\(" \+ z\.s/.test(azM[0])) fail("applyImgZoom 内 transform 序错(须 translate 在 scale 前——光标锚定数学依赖)");
+    if (!/sNext === 1\)[\s\S]{0,120}resetImageZoom\(/.test(wb)) fail("触底复位缺失(缩回 s=1 时 tx 残留→100% 图偏移且此后 wheel 永久 no-op)");
+}
+// 复位配对:dblclick / resetToDefaultSize / resize pointerdown / resize onUp 四处须调 resetImageZoom
+if (!/addEventListener\("dblclick"[\s\S]{0,400}resetImageZoom\(/.test(overlay)) fail("dblclick 未调 resetImageZoom");
+if (!/function resetToDefaultSize\(\)[\s\S]{0,200}resetImageZoom\(popup\)/.test(overlay)) fail("resetToDefaultSize 未调 resetImageZoom(窗复位图仍放大=状态分裂)");
+if (!/e\.preventDefault\(\); e\.stopPropagation\(\);[\s\S]{0,150}resetImageZoom\(popup\)/.test(overlay)) fail("resize pointerdown 未调 resetImageZoom(tx/ty px 锚点随布局变即失真)");
+if (!/savePopupSize\(popup\.offsetWidth, popup\.offsetHeight\);[\s\S]{0,150}resetImageZoom\(popup\)/.test(overlay)) fail("resize onUp 未调 resetImageZoom(拖角+滚动并发竞态残留)");
 
 if (fails) { console.error(`\nFAIL: test-contract-sync（${fails} 处跨边界同步失配）`); process.exit(1); }
 console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class + fetch优先级 + NATIVE⊆EXTS 全同步）");
