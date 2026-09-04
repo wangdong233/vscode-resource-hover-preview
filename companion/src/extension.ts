@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import * as cp from "child_process";
-import { startPreviewServer } from "./server";
+import { startPreviewServer, ensureAudioCacheByPath } from "./server";
 
 const PATCH_JS = path.join(__dirname, "..", "patcher.js"); // INSTALL_DIR/patcher.js（installRuntimeFiles 复制）
 
@@ -26,6 +26,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 3. spawn patcher --patch-only（patcher 读 INSTALL_DIR token + port 17741 bake mp-config；不传 env）
     setImmediate(() => runPatcher(output));
+
+    // 0.5.30 音频旁路预热:启动 12s 后(避宿主启动抢 IO/CPU)后台串行预提取 AAC 家族音轨 → 消除首次悬停 ~1.4s。
+    // 护栏:nice -n 10 低优先级(server 内) + 串行+250ms 间隔 + 预算(80 文件/8min)+ mtime 降序(最近动的更可能被预览)
+    //     + 50MB 单文件上限 + node_modules 排除;预热与用户实时请求同键合流(server _audioJobs)。可配置 prewarmAudio 关闭。
+    const prewarmEnabled = vscode.workspace.getConfiguration("resource-hover-preview").get<boolean>("prewarmAudio", true);
+    if (prewarmEnabled) setTimeout(() => { prewarmAudioCache(output).catch(() => { /* ignore */ }); }, 12000);
 
     // 审查 2.4：enabled 配置变更 → 重新 bake mp-config（需 Cmd+Q 生效，因 mp-config.js 走磁盘缓存）
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
@@ -90,3 +96,25 @@ function findNodeBin(): string {
 }
 
 export function deactivate() { /* server 由 context.subscriptions dispose */ }
+
+// 0.5.30 音频旁路预热(一次性/会话内;预算耗尽即止——不循环不常驻,file 变更由缓存键 mtime 自动失效重提)
+const PREWARM_MAX_FILES = 80, PREWARM_BUDGET_MS = 8 * 60 * 1000, PREWARM_GAP_MS = 250, PREWARM_MAX_BYTES = 50 * 1024 * 1024;
+async function prewarmAudioCache(output: vscode.OutputChannel): Promise<void> {
+    if (!vscode.workspace.workspaceFolders?.length) return;
+    const t0 = Date.now();
+    let uris: vscode.Uri[];
+    try { uris = await vscode.workspace.findFiles("**/*.{mp4,mov,m4v,m4a,aac}", "**/{node_modules,dist,out,build,.git}/**", 1000); } catch { return; }  // 0.5.30b:findFiles 只套 files.exclude(不含 node_modules!VSCode 源码语义),显式排除必须全列
+    const cands = (await Promise.all(uris.map(u => new Promise<{ p: string; m: number } | null>(res =>
+        fs.stat(u.fsPath, (e, st) => res(e || !st || !st.isFile() || st.size > PREWARM_MAX_BYTES ? null : { p: u.fsPath, m: st.mtimeMs }))))))
+        .filter((x): x is { p: string; m: number } => !!x).sort((a, b) => b.m - a.m).slice(0, PREWARM_MAX_FILES);
+    let extracted = 0, noaudio = 0;
+    for (const c of cands) {
+        if (Date.now() - t0 > PREWARM_BUDGET_MS) break;
+        try {
+            const r = await ensureAudioCacheByPath(c.p, true);  // lowPriority: nice + 用户实时请求同键合流
+            if (r) extracted++; else noaudio++;  // r=缓存路径(新提取或已缓存皆已就绪);null=无音轨/跳过(区分度交由 server 日志)
+        } catch { noaudio++; }
+        await new Promise(r => setTimeout(r, PREWARM_GAP_MS));
+    }
+    output.appendLine(`[mp] 音频旁路预热完成: 就绪 ${extracted} / 无音轨或跳过 ${noaudio}(候选 ${cands.length},耗时 ${Math.round((Date.now() - t0) / 1000)}s,nice 低优先级串行)`);
+}

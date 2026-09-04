@@ -138,6 +138,12 @@ console.log("[3/3] 收尾。");
     const r3 = await fetch(au, { headers: { Range: "bytes=0-99" } });
     if (r3.status !== 206 || r3.headers.get("content-length") !== "100") fail("/audio Range 失效(" + r3.status + ")");
     console.log("    /audio: 200+ETag / 304 / 206 ✓");
+    // 0.5.30 预热函数:二次调用走缓存(<100ms)——EH 启动预热消费的同一入口
+    const ensure = (modA2 => modA2.ensureAudioCacheByPath || modA2.default?.ensureAudioCacheByPath)(await import(pathToFileURL(base + "companion/dist/server.js").href));
+    const tA = Date.now(); const rA = await ensure(srcV, true); const firstMs = Date.now() - tA;
+    const tB = Date.now(); const rB2 = await ensure(srcV, true); const secondMs = Date.now() - tB;
+    if (!rA || !rB2) fail("ensureAudioCacheByPath 返回 null(缓存应已就绪)");
+    if (secondMs > 100) fail("预热二次调用未走缓存(" + secondMs + "ms > 100ms——首次 " + firstMs + "ms)");
     srvA.server.close();
   }
 }

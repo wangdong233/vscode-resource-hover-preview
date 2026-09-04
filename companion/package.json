@@ -1,7 +1,7 @@
 {
   "name": "vscode-resource-hover-preview-companion",
   "displayName": "Resource Hover Preview",
-  "version": "0.5.29",
+  "version": "0.5.30",
   "publisher": "wangdong",
   "repository": {
     "type": "git",
@@ -37,6 +37,11 @@
           "type": "boolean",
           "default": true,
           "description": "启用资源管理器悬停浮动预览。设为 false 关闭（需 Cmd+Q 完全重启生效，mp-config.js 走磁盘缓存）。"
+        },
+        "resource-hover-preview.prewarmAudio": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动后后台预提取 AAC 家族音轨到本地缓存(消除视频预览首次 ~1.4s;nice 低优先级串行,80 文件/8 分钟预算)"
         }
       }
     }

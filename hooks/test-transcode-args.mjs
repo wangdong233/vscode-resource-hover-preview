@@ -43,7 +43,12 @@ if (!/"-vn",\s*"-c:a",\s*"libmp3lame",\s*"-b:a",\s*"192k",\s*"-ar",\s*"44100",\s
 if (!/\." \+ Date\.now\(\) \+ "\.mp3"/.test(src)) fail("/audio tmp 须 .mp3 后缀(ffmpeg 按扩展名推输出格式;.tmp=rig 实证失败)");
 if (!/\.noaudio/.test(src) || !/createHash/.test(src)) fail("/audio 负缓存标记(.noaudio)或缓存键(sha1 path|size|mtimeMs)缺失");
 if (!/serveStaticAudio/.test(src) || !/Content-Length/.test(src)) fail("/audio 须静态 Range 服务(完整 Content-Length→<audio> 全量时长)");
-if (!/serveStaticAudio\(cached, cstat, etagOf\(cstat\)/.test(src)) fail("/audio ETag 须 etagOf(cstat)(🔴-1:手写字面量曾致 304 永失效)");
+if (!/serveStaticAudio\(cachedPath, cstat, etagOf\(cstat\)/.test(src)) fail("/audio ETag 须 etagOf(cstat)(🔴-1:手写字面量曾致 304 永失效)");
+const extSrc = readFileSync(join(ROOT, "companion", "src", "extension.ts"), "utf8");
+if (!/export async function ensureAudioCacheByPath/.test(src) || !/_audioJobs/.test(src)) fail("0.5.30:ensureAudioCacheByPath 单一入口+并发合流表缺失(/audio 端点与预热双消费,零漂移)");
+if (!/if \(lowPriority && process\.platform === "darwin" && fs\.existsSync\("\/usr\/bin\/nice"\)\) run\("\/usr\/bin\/nice", \["-n", "10"\]\);/.test(src)) fail("预热提取须 nice 低优先级(完整条件式钉死——防条件禁用型 mutation;用户实时请求不 nice→OS 调度器天然优先级反转)");
+if (!/ensureAudioCacheByPath\(c\.p, true\)/.test(extSrc) || !/findFiles\(\"\*\*\/\*\.{mp4,mov,m4v,m4a,aac}\"/.test(extSrc)) fail("EH 预热须串行调用 ensureAudioCacheByPath + findFiles AAC 家族");
+if (!/PREWARM_BUDGET_MS|PREWARM_MAX_FILES/.test(extSrc)) fail("预热预算护栏缺失(80 文件/8min——2015 i7/A2000 机器防预热风暴)");
 console.log("[1/5] 双路参数抽自源码 ✓ (remux copy+mp3 / webm vpx+opus / movflags=" + movflags + ")");
 
 // ② 同步抽 audio args 里的 wav 编码（防音频路径参数漂移）
