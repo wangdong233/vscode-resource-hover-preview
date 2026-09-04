@@ -120,22 +120,22 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
     function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
     // 档3:非原生格式走 /transcode(ffmpeg 转码);原生走 /preview
-    // 0.5.27 🔴根因路由:VSCode 出厂 libffmpeg 无 AAC 解码器(本机二进制已验:仅 h264/flac/mp3/pcm/vorbis/vp8;
-    //   vscode#329811/#310736 同证)→ mp4/mov 系 AAC 音轨不可解 → Chromium HasAudio()=false → 原生 mute 按钮
-    //   disabled(死键)+ 无声。探测 AAC 不可解时,AAC 家族一律改走 /transcode(video→webm/vp8/opus,audio→wav,
-    //   全部落在 VSCode 实持有的解码器集合)。mediaCapabilities 探测;失败/超时前 fail-open(原生路径)。
-    var AAC_OK = true;  // 探测完成前 fail-open
-    try {
-        navigator.mediaCapabilities.decodingInfo({ type: "file", audio: { contentType: 'audio/mp4; codecs="mp4a.40.2"' } })
-            .then(function (r) { AAC_OK = !!r.supported; })
-            .catch(function () { /* fail-open 保持 true */ });
-    } catch (e) { /* 老环境无 mediaCapabilities:fail-open */ }
+    // 0.5.28 🔴根因二修(用户实测:控件活但零声):0.5.27 用运行时能力 API 探测 AAC(decodingInfo)不可靠——
+    //   Chromium 能力表按【编译期 proprietary_codecs】静态声明,不反映 VSCode 出厂 libffmpeg 实际未带 AAC 解码器
+    //   → 表说 supported、实际解码零 → 探测恒真 → 从未路由 → 原生 AAC 静音。
+    //   修正 = 确定性路由(无探测):AAC 家族【恒走 /transcode】(h264 源 remux 实测 85× 实时,成本可忽略;
+    //   mp3 解码器 ff_mp3_decoder 在 VSCode 实持集合内)。
+    //   二层自愈:播放 1s 后验声(webkitAudioDecodedByteCount===0 → 强制 webm/opus 整转重试一次,兜 mp3-in-mp4
+    //   demux 兼容缺口/异构音轨;见 renderVideo audioRetry)。三层:转码 error → 回退原生一次(🔴-1)。
     var AAC_FAMILY = ["mp4", "mov", "m4v", "m4a", "aac"];
-    function mediaUrl(p, type) {
+    // ⚠️ 长片取舍记档(0.5.28b):/transcode 响应无 Range/无 Content-Length——长视频 seek 限于已转码前缀,duration=Infinity
+    //   期进度条禁拖(原生路径是全量 Range seek 的降级;短片无感,remux 85× 实时使前缀通常远超播放头)。
+    function mediaUrl(p, type, vc) {  // vc="webm" = 自愈梯强制重编码路(R-INT-04:URL 单一构造点,勿手拼)
         var ext = (p.split(".").pop() || "").toLowerCase();
         var isNative = (type === "video" && NATIVE_VIDEO.indexOf(ext) >= 0) || (type === "audio" && NATIVE_AUDIO.indexOf(ext) >= 0);
-        if (!isNative) return SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN);
-        if (!AAC_OK && AAC_FAMILY.indexOf(ext) >= 0) return SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN);  // AAC 家族:宿主解不了 → 转自由编解码
+        var t = SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + (vc ? "&vc=" + vc : "") + "&token=" + encodeURIComponent(TOKEN);
+        if (!isNative) return t;
+        if (AAC_FAMILY.indexOf(ext) >= 0) return t;  // AAC 家族恒路由:VSCode 必无 AAC 解码器(官方构建);full-ffmpeg 自建 VSCode 也仅付 ~0.5s remux
         return previewUrl(p, type);
     }
     // fetcherFor：类型分派取数据 → {data, bytes}。
@@ -705,12 +705,41 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         video.addEventListener("click", function () { if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); } else video.pause(); });  // 点击画面切播放(媒体播放器惯例;与 pan/drag 无冲突——video 在 DRAG_SKIP)
         var settled = false;
         var nativeFallbackTried = false;  // 0.5.27d 🔴-1修(对抗审):AAC 路由把 mp4 系送 /transcode 后,无 ffmpeg 宿主 404 → 原生可播文件反成报错卡(0.5.26 同机是"有画无声"可用态)。回退原生一次
+        var audioRetryTried = false;  // 0.5.28 自愈梯标记(防循环)
         var settle = function () {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
             if (settled || ep !== renderEpoch) return; settled = true;
             if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect);
             else if (rect) placePopup(rect);
             content.replaceChildren(video, buildMediaBar(video));  // loading 占位此刻一次换掉(video+bar 同刻插入,S1 不变式保持)
             var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播;被拒也无需兜底(mp-mb play 按钮=手势路径,点它即播)
+            // 0.5.28 自愈梯(0.5.28b 软边修):1s 后验声——路由态音频解码字节仍 0 = mp3-in-mp4 demux 兼容缺口/异构音轨未解
+            //   → 强制 webm/opus 整转重试一次(audioRetryTried 防循环;真无音轨源重试一次即止)。
+            //   可判性:健康(解码>0)即止;确定坏(duration 有限+readyState≥2+非 seeking+在播+零解码)→ 重试;
+            //   暂不可判(元数据未到/缓冲中/暂停)→ 500ms 后再查【不消耗一次性机会】(防误杀慢启动流/防首秒暂停被强制续播),
+            //   至多 12 轮(~7s)放弃。触发时 warn 留痕(静默降级必留痕铁律)。
+            var ladderChecks = 0;
+            var ladder = function () {
+                if (ep !== renderEpoch || audioRetryTried) return;
+                if (video.src.indexOf("/transcode") < 0) return;
+                if ((video.webkitAudioDecodedByteCount || 0) > 0) return;  // 声音在解 → 健康
+                if (!isFinite(video.duration) || video.duration <= 0 || video.readyState < 2 || video.seeking || video.paused) {
+                    if (++ladderChecks > 12) return;
+                    setTimeout(ladder, 500);
+                    return;
+                }
+                audioRetryTried = true;
+                try { console.warn("[mp] 音频零解码 → 重试 webm 整转:", filePath.slice(-64), "decoded=", video.webkitAudioDecodedByteCount); } catch (e) {}
+                var at = video.currentTime;
+                video.src = mediaUrl(filePath, "video", "webm");
+                video.addEventListener("loadedmetadata", function retryGo() {
+                    video.removeEventListener("loadedmetadata", retryGo);
+                    if (ep !== renderEpoch) return;
+                    try { video.currentTime = at; } catch (e) {}
+                    var pr2 = video.play(); if (pr2 && pr2.catch) pr2.catch(function () {});
+                });
+                video.load();
+            };
+            setTimeout(ladder, 1000);
         };
         video.addEventListener("loadedmetadata", settle);
         setTimeout(settle, 600);  // 兜底:metadata 迟到也出画面(默认 400×300);迟到后不二次改尺寸(防跳)

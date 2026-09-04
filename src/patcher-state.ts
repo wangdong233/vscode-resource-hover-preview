@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.28.23"; // bump:0.5.27f gate8 回退行为断言(mutation 静默漏网补——静态标记在但条件禁用的形态只有行为级能抓)
+export const INJECT_VERSION = "v0.28.25"; // bump:0.5.28b 对抗审查 5🟡 全修——自愈梯软边(不可判态 500ms 重查不消耗/暂停不判/readyState≥2 门)+触发留痕+URL 单点(mediaUrl vc 参)+长片 seek 取舍记档+-ar 论断纠注
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;

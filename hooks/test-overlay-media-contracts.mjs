@@ -31,11 +31,14 @@ if (!/isFinite\(media\.duration\) && media\.duration > 0\) media\.currentTime/.t
 if (!/media\.addEventListener\("volumechange"/.test(ov) || !/media\.addEventListener\("timeupdate"/.test(ov)) fail("mp-mb 须监听 volumechange/timeupdate(控件态与媒体态双向同步)");
 
 // 2.5 0.5.27 🔴根因路由契约:VSCode 出厂 libffmpeg 无 AAC(二进制已验)→ AAC 轨 HasAudio()=false → 原生 mute 死键+无声
-if (!/var AAC_OK = true;/.test(ov) || !/navigator\.mediaCapabilities\.decodingInfo/.test(ov)) fail("须 mediaCapabilities 探测 AAC(fail-open 初始 true)");
-if (!/var AAC_FAMILY = \["mp4", "mov", "m4v", "m4a", "aac"\];/.test(ov) || !/!AAC_OK && AAC_FAMILY\.indexOf\(ext\) >= 0/.test(ov)) fail("AAC 家族须按探测结果改走 /transcode(mp4/mov/m4v/m4a/aac)");
+if (/AAC_OK/.test(ov) || /mediaCapabilities/.test(ov)) fail("0.5.28:能力探测已删——decodingInfo 查编译期静态表,stripped-ffmpeg 下说谎(表称支持/实际无解码器),用户实测零声主因");
+if (!/var AAC_FAMILY = \["mp4", "mov", "m4v", "m4a", "aac"\];/.test(ov) || !/if \(AAC_FAMILY\.indexOf\(ext\) >= 0\) return t;/.test(ov)) fail("0.5.28:AAC 家族须恒路由 /transcode(无探测;VSCode 必无 AAC,full-ffmpeg 自建仅付 ~0.5s remux)");
 if (!/var nativeFallbackTried = false;/.test(ov) || !/video\.src\.indexOf\("\/transcode"\) >= 0/.test(ov)) fail("🔴-1:转码路死(无 ffmpeg 404)且原生可播时须回退 previewUrl 一次(0.5.27d 对抗审——否则无 ffmpeg 宿主 mp4 报错卡回归)");
 if (!/if \(document\.activeElement !== seek\) seek\.value/.test(ov)) fail("🟡-1:seek 须 activeElement 守卫(拖动中不被 timeupdate 覆写)");
 if (!/mp-mb-narrow/.test(ov) || !/mp-mb-tiny/.test(ov)) fail("🟡-4:窄窗自适应档位缺失(<300 藏 time,<250 藏 vol)");
+if (!/var audioRetryTried = false;/.test(ov) || !/mediaUrl\(filePath, "video", "webm"\)/.test(ov) || !/webkitAudioDecodedByteCount \|\| 0\) > 0/.test(ov)) fail("0.5.28 自愈梯缺失:路由态验声零解码须强制 vc=webm 整转重试一次(URL 须经 mediaUrl 单点构造)");
+if (!/ladderChecks > 12/.test(ov) || !/readyState < 2/.test(ov)) fail("0.5.28b 软边:不可判态(duration 未到/缓冲/暂停)须 500ms 重查且不消耗机会(≤12 轮),防误杀慢启动流/防首秒暂停被强制续播");
+if (!/音频零解码/.test(ov)) fail("自愈梯触发须 console.warn 留痕(静默降级必留痕铁律)");
 if (/\.controls = true/.test(ov)) fail("禁 controls=true(重复检查)");
 
 // 3. 缩放契约(0.5.22 增:上限 1000 实际无限 + pan + rail 复原按钮)

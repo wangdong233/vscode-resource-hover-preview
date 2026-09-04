@@ -209,6 +209,7 @@ function findFfmpeg(): Promise<string | null> {
 
 // 档3 /transcode: ffmpeg 实时转码非 web 格式 → fMP4(video)/WAV(audio),流式 pipe(<video>/<audio> 直吃 chunked fMP4)
 let _ffprobeMissLogged = false;  // 0.5.27d 🟡-2:ffprobe 缺失降级只留痕一次
+let _ffMissingLogged = false;    // 0.5.28:ffmpeg 缺失留痕一次(静默降级必留痕)
 async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
     let file = url.searchParams.get("file");
     const type = url.searchParams.get("type");
@@ -223,8 +224,13 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
         if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) { res.writeHead(403); res.end("outside workspace"); return; }
     }
     const ff = await findFfmpeg();  // 0.5.12🟡异步:不阻塞 EH
-    if (!ff || res.writableEnded) { if (!res.writableEnded) { res.writeHead(404); res.end("no ffmpeg"); } return; }  // 无 ffmpeg→404(静默 hidePopup);或探测期间客户端已断开
+    if (!ff || res.writableEnded) {
+        if (!res.writableEnded) { res.writeHead(404); res.end("no ffmpeg"); if (!_ffMissingLogged) { _ffMissingLogged = true; console.error("[mp] /transcode 需 ffmpeg——候选路径(ffmpeg//usr/local/bin//opt/homebrew/bin//usr/bin)均未找到;AAC 家族(mp4/mov/m4v/m4a/aac)与非原生视频预览降级(回退原生,无声)"); } }  // 0.5.28 留痕(静默降级必留痕)
+        return;
+    }  // 无 ffmpeg→404(overlay error→回退原生);或探测期间客户端已断开
     const isAudio = type === "audio";
+    // 0.5.28:vc=webm 强制走重编码路(overlay 自愈梯:remux 产物音频解码 0 字节时整转重试)——跳过 ffprobe 直取 webm
+    const forceWebm = !isAudio && url.searchParams.get("vc") === "webm";
     // 0.5.27 🔴根因修正:video 输出禁 AAC(VSCode 出厂 libffmpeg 无 AAC——本机二进制已验:仅 h264/flac/mp3/pcm/vorbis/vp8
     //   +Chromium 内建 libopus;vscode#329811/#310736 同证)→ fMP4+AAC 在 workbench 里视频可见而音轨死
     //   (HasAudio()=false→原生 mute 置 disabled 死键+无声)。双路输出,全部落在 VSCode 实持有的解码器集合:
@@ -233,17 +239,17 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
     //   ② 其余(avi-mpeg4/prores/hevc…)→ webm/VP8/Opus 重编码(scale=640 保 realtime)
     //   音频支路 WAV(pcm_s16le)本就是自由编解码,不动。
     let vcodec = "";
-    if (!isAudio) {
+    if (!isAudio && !forceWebm) {  // 0.5.28:vc=webm 跳过探测直取重编码
         const ffprobe = ff.replace(/ffmpeg$/, "ffprobe");
         try {
             vcodec = await new Promise<string>((res2, rej2) => execFile(ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", realPath], { timeout: 4000 }, (e: Error | null, out?: string) => e ? rej2(e) : res2((out || "").trim().split("\n")[0] || "")));
         } catch { vcodec = ""; if (!_ffprobeMissLogged) { _ffprobeMissLogged = true; console.error("[mp] ffprobe 不可用 — h264 remux 快路降级为 webm 重编码慢路(ffmpeg 同源 ffprobe 缺失;0.5.8 教训:静默降级必留痕)"); } }
     }
-    const remux = vcodec === "h264";
+    const remux = !forceWebm && vcodec === "h264";
     const args = isAudio
         ? ["-i", realPath, "-f", "wav", "-c:a", "pcm_s16le", "-"]
         : remux
-            ? ["-i", realPath, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-"]
+            ? ["-i", realPath, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-"]  // -ar 44100:钉死输出采样率(ffmpeg 自动重采样因版本而异;实证 8.1.2 对 96k 源自动降采 48k 不报错——0.5.28b 审查纠注,原"会失败"论断不实)
             : ["-i", realPath, "-vf", "scale=640:-2", "-f", "webm", "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "5", "-b:v", "2M", "-c:a", "libopus", "-b:a", "96k", "-"];
     let ffmpeg;
     try { ffmpeg = spawn(ff, args, { stdio: ["ignore", "pipe", "pipe"] }); }

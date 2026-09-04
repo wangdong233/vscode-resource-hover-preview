@@ -88,7 +88,7 @@ async function scenario() {
         localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
         document: mkDoc(),
         window: { innerWidth: 1920, innerHeight: 1080 },
-        navigator: { mediaCapabilities: { decodingInfo: function () { return Promise.resolve({ supported: false }); } } },  // 0.5.27e:AAC 探测桩(不支持)→ mp4 路由 /transcode,供场景4 回退断言
+        navigator: {},  // 0.5.28:探测已删,AAC 家族恒路由——无需桩
     };
     sandbox.window.__MP_CONFIG__ = { port: 17741, token: "gate-token", version: "test", enabled: true };  // 缺此 IIFE 早退(降等保护)
     sandbox.window.MP_THREE = undefined;
@@ -195,12 +195,27 @@ async function scenario() {
                 if (vid4.muted !== false) fail("mp-mb mute 点击未解静音(muted 应翻 false)——用户实测死按钮的替代路径失效");
                 vid4.duration = 100; bSeek.value = "250"; bSeek.dispatch("input", {});  // duration 由媒体栈供;stub 手设后 seek
                 if (vid4.currentTime !== 25) fail("mp-mb seek 未写入 currentTime(实得 " + vid4.currentTime + ")");
-                if (!String(vid4.src).includes("/transcode")) fail("场景4: AAC 桩不支持时 mp4 须路由 /transcode(实得 " + vid4.src + ")");
+                if (!String(vid4.src).includes("/transcode")) fail("场景4: mp4 须恒路由 /transcode(0.5.28 无探测;实得 " + vid4.src + ")");
+                vid4.webkitAudioDecodedByteCount = 0;  // 0.5.28 自愈梯:路由态解码零字节
+                await new Promise(r => setTimeout(r, 1100));
+                if (!String(vid4.src).includes("vc=webm")) fail("自愈梯失效:1s 验声零解码未切 vc=webm(实得 " + vid4.src + ")");
+                vid4.src = vid4.src.replace("&vc=webm", "");  // 还原为普通 transcode URL 再测 error 回退
                 vid4.dispatch("error", {});  // 0.5.27e 🔴-1 行为断言:转码路死(无 ffmpeg 404)→ 回退原生一次
                 if (!String(vid4.src).includes("/preview")) fail("🔴-1 回退失效:转码 error 后 src 未回退 /preview(无 ffmpeg 宿主 mp4 将报错卡——0.5.27d 对抗审)");
                 if (!vid4._calls.includes("play")) fail("回退后须重试 play");
             }
         }
+    }
+    // --- 场景4b(0.5.28b 阴性):不可判态不消耗重试机会(M4b/M5 幸存者补网) ---
+    await hover(rowPng); await hover(rowMp4); await new Promise(r => setTimeout(r, 900));  // 重渲染取新 video(新 latch)
+    const vid5 = popup4 && popup4._qs(popup4, ".mp-content video");
+    if (vid5) {
+        vid5.webkitAudioDecodedByteCount = 0; vid5.duration = Infinity; vid5.paused = false;
+        await new Promise(r => setTimeout(r, 1600));
+        if (String(vid5.src).includes("vc=webm")) fail("阴性失效:duration=Infinity 期不得消耗重试(误杀慢启动流)");
+        vid5.duration = 100; vid5.paused = true;  // 暂停中也不判(用户首秒暂停不被强制续播)
+        await new Promise(r => setTimeout(r, 1300));
+        if (String(vid5.src).includes("vc=webm")) fail("阴性失效:暂停中不得判(M4b:用户首秒暂停被 1s 重试强制续播)");
     }
     console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }

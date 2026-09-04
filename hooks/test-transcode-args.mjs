@@ -27,6 +27,10 @@ if (!m) fail("未在 server.ts 抽到 movflags 字面量(remux 路需要;0.5.0 �
 const movflags = m[1];
 const hasRemux = /"-c:v",\s*"copy",\s*"-c:a",\s*"libmp3lame"/.test(src);
 const hasProbe = /ffprobe/.test(src) && /vcodec === "h264"/.test(src);
+const hasAr = /"-ar",\s*"44100"/.test(src);
+const hasVc = /vc.*===.*"webm"/.test(src);
+if (!hasAr) fail("remux 缺 -ar 44100(mp3 采样率上限 48k,96k+ 源 encode 必失败→流截断)");
+if (!hasVc) fail("缺 vc=webm 强制重编码参数(overlay 自愈梯依赖)");
 const hasVpx = /"-c:v",\s*"libvpx"/.test(src);
 const hasOpus = /"-c:a",\s*"libopus"/.test(src);
 const hasScale = /"-vf",\s*"scale=640:-2"/.test(src);
@@ -52,8 +56,8 @@ const avi = TMP + ".avi", webm = TMP + ".webm", rmx = TMP + "-r.mp4";
 let r = spawnSync(ff, ["-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
     "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-c:a", "aac", "-shortest", avi, "-y"], { stdio: "ignore" });
 if (r.status !== 0) fail("生成测试 MP4/AVI 失败（ffmpeg lavfi 不可用？）");
-// remux 路(源码同款 -c:v copy + libmp3lame + movflags)
-r = spawnSync(ff, ["-i", avi, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp4", "-movflags", movflags, "-"], {
+// remux 路(源码同款 -c:v copy + libmp3lame + -ar 44100 + movflags)
+r = spawnSync(ff, ["-i", avi, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-f", "mp4", "-movflags", movflags, "-"], {
     stdio: ["ignore", "pipe", "ignore"], encoding: "buffer", maxBuffer: 50 * 1024 * 1024, timeout: 30000
 });
 if (r.status !== 0 || !r.stdout || r.stdout.length === 0) fail(`remux 路失败(status=${r.status})——movflags "${movflags}" 错 token?(0.5.0 教训:应为 frag_keyframe+empty_moov+default_base_moof)`);
