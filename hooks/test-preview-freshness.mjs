@@ -33,7 +33,7 @@ if (!riBlock || !/fetchImageFresh\(/.test(riBlock[0])) fail("renderImage 未走 
 if (!/_prefetched/.test(overlaySrc) || !/PREFETCH_TTL/.test(overlaySrc)) fail("schedulePrefetch 缺 _prefetched 节流(image 无缓存键后防重复条件请求)");
 // 视频静音契约(用户铁则:预览绝不主动出声;默认静音;控件可人为开声/调音量)——0.5.20 更新:settle-before-show 删 autoplay 属性(显式 play),细契约见 test-overlay-media-contracts
 if (/\.controls = true/.test(overlaySrc) || /video\.autoplay/.test(overlaySrc)) fail("0.5.27:禁 controls=true(自研 mp-mb)+禁 autoplay 属性;renderVideo 须 muted=true 起播");  // 0.5.27 契约升级:原生 UA 控件弃用
-if (!/content\.replaceChildren\(video, buildMediaBar\(video\)\);/.test(overlaySrc)) fail("0.5.27:video 须与 mp-mb 控件条同刻插入(S4 ▶fallback 已删,由 mp-mb play 手势路径覆盖)");
+if (!/content\.replaceChildren\.apply\(content, kids\);/.test(overlaySrc)) fail("0.5.29:video+twin+bar 须同刻插入(kids 数组;S1 不变式)");
 
 // ===== B. 真跑 server:304 协商 / 同名覆盖 / If-Range =====
 console.log("[2/3] 真跑 server(304/覆盖换新/同尺寸覆盖/If-Range)...");
@@ -114,6 +114,35 @@ if (mod) {
 
 // ===== C. 收尾 =====
 console.log("[3/3] 收尾。");
+// 0.5.29c /audio HTTP 层(🔴-1 复发防线):自足 server 真跑 200+ETag → If-None-Match 304 → Range 206
+{
+  const { spawnSync } = await import("node:child_process");
+  const ffq = ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"].find(p => { try { spawnSync(p, ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch { return false; } });
+  if (!ffq) console.log("    /audio: 无 ffmpeg → skip");
+  else {
+    const dirA = mkdtempSync(join(tmpdir(), "mp-aud-"));
+    const srcV = join(dirA, "av.mp4");
+    spawnSync(ffq, ["-f", "lavfi", "-i", "sine=duration=1", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=5", "-c:a", "aac", "-c:v", "libx264", "-shortest", srcV, "-y"], { stdio: "ignore", timeout: 20000 });
+    const tokA = randomBytes(12).toString("hex");
+    const modA = await import(pathToFileURL(base + "companion/dist/server.js").href);
+    const srvA = (modA.startPreviewServer || modA.default?.startPreviewServer)(tokA, [dirA], undefined, 0);
+    await new Promise(r => srvA.server.once("listening", r));
+    const au = "http://127.0.0.1:" + srvA.server.address().port + "/audio?file=" + encodeURIComponent(srcV) + "&token=" + tokA;
+    const r1 = await fetch(au);
+    if (r1.status !== 200) fail("/audio 首请求非 200(实得 " + r1.status + "——🔴-1 类/提取失败)");
+    await r1.arrayBuffer();
+    const et = r1.headers.get("etag");
+    if (!et || et.includes("+")) fail("/audio ETag 异常:[" + et + "](🔴-1 字面量笔误特征)");
+    const r2 = await fetch(au, { headers: { "If-None-Match": et } });
+    if (r2.status !== 304) fail("/audio 304 协商失效(实得 " + r2.status + ")");
+    const r3 = await fetch(au, { headers: { Range: "bytes=0-99" } });
+    if (r3.status !== 206 || r3.headers.get("content-length") !== "100") fail("/audio Range 失效(" + r3.status + ")");
+    console.log("    /audio: 200+ETag / 304 / 206 ✓");
+    srvA.server.close();
+  }
+}
+
 if (fails) { console.error(`\nFAIL: test-preview-freshness（${fails} 处）`); process.exit(1); }
 console.log("OK: test-preview-freshness（源码契约 + 真跑 304/同名覆盖/同尺寸覆盖/If-Range 全序列 + 视频静音契约）");
 process.exit(0);
+

@@ -171,53 +171,60 @@ async function scenario() {
     }
     console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
 
-    // --- 场景4(0.5.27 核心):自研 mp-mb 控件条行为——原生 UA 控件(闭影 DOM)被弃后,交互面全部落在此 ---
-    //    点 play → video.play 被调;点 mute → muted 翻 false(手势内解静音);seek input → currentTime 写入。
-    //    这正是用户实测死的交互(原生 mute 死按钮),从此有闸。
+    // --- 场景4(0.5.29 核心):原生基底 + mixer 双元素同步 + 走廊守卫 ---
     await hover(rowMp4);
-    await new Promise(r => setTimeout(r, 900));  // settle 600ms 兜底(settle 走 setTimeout 兜底路径)
+    await new Promise(r => setTimeout(r, 900));  // settle 600ms 兜底
     const popup4 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
     const vid4 = popup4 && popup4._qs(popup4, ".mp-content video");
     if (!vid4) fail("场景4: video 未落(settle 未跑通)");
     else {
-        if (vid4.controls) fail("video 不得带 controls(原生 UA 控件已弃;属性式/setAttribute 式皆抓)");
-        const bar = popup4._qs(popup4, ".mp-content .mp-mb");
-        if (!bar) fail("mp-mb 控件条未建(buildMediaBar 未跑)");
+        if (String(vid4.src).indexOf("/preview") < 0) fail("0.5.29 核心:mp4 须原文件 /preview 直读(完整时长/秒拖;实得 " + vid4.src + ")");
+        const twin4 = popup4._qs(popup4, ".mp-content audio");
+        if (!twin4) fail("twin 音频旁路未建(TWIN_NEEDED 家族)");
         else {
-            const bPlay = bar._qs(bar, ".mp-mb-play"), bMute = bar._qs(bar, ".mp-mb-mute"), bSeek = bar._qs(bar, ".mp-mb-seek");
-            if (!bPlay || !bMute || !bSeek) fail("mp-mb 三要件缺(play/mute/seek)");
+            if (String(twin4.src).indexOf("/audio") < 0) fail("twin 须接 /audio 提取端点(实得 " + twin4.src + ")");
+            if (twin4.muted !== true) fail("twin 须 muted 起播(autoplay 政策)");
+            const bar = popup4._qs(popup4, ".mp-content .mp-mb");
+            const bPlay = bar && bar._qs(bar, ".mp-mb-play"), bMute = bar && bar._qs(bar, ".mp-mb-mute"), bSeek = bar && bar._qs(bar, ".mp-mb-seek");
+            if (!bPlay || !bMute || !bSeek) fail("mp-mb 三要件缺");
             else {
-                bPlay.dispatch("click", {});  // 初始:renderVideo settle 已 play(paused=false)→ 此点击=暂停
-                if (!vid4._calls.includes("pause")) fail("mp-mb play 点击未驱动媒体(点按→pause 未调)");
-                bPlay.dispatch("click", {});  // 再点=播放
-                if (!vid4._calls.includes("play")) fail("mp-mb play 点击未驱动媒体(再点→play 未调)");
-                bMute.dispatch("click", {});  // muted=true → false(手势内解静音,用户核心诉求)
-                if (vid4.muted !== false) fail("mp-mb mute 点击未解静音(muted 应翻 false)——用户实测死按钮的替代路径失效");
-                vid4.duration = 100; bSeek.value = "250"; bSeek.dispatch("input", {});  // duration 由媒体栈供;stub 手设后 seek
-                if (vid4.currentTime !== 25) fail("mp-mb seek 未写入 currentTime(实得 " + vid4.currentTime + ")");
-                if (!String(vid4.src).includes("/transcode")) fail("场景4: mp4 须恒路由 /transcode(0.5.28 无探测;实得 " + vid4.src + ")");
-                vid4.webkitAudioDecodedByteCount = 0;  // 0.5.28 自愈梯:路由态解码零字节
-                await new Promise(r => setTimeout(r, 1100));
-                if (!String(vid4.src).includes("vc=webm")) fail("自愈梯失效:1s 验声零解码未切 vc=webm(实得 " + vid4.src + ")");
-                vid4.src = vid4.src.replace("&vc=webm", "");  // 还原为普通 transcode URL 再测 error 回退
-                vid4.dispatch("error", {});  // 0.5.27e 🔴-1 行为断言:转码路死(无 ffmpeg 404)→ 回退原生一次
-                if (!String(vid4.src).includes("/preview")) fail("🔴-1 回退失效:转码 error 后 src 未回退 /preview(无 ffmpeg 宿主 mp4 将报错卡——0.5.27d 对抗审)");
-                if (!vid4._calls.includes("play")) fail("回退后须重试 play");
+                vid4._calls.length = 0; twin4._calls.length = 0;
+                bPlay.dispatch("click", {});  // settle 已 play(paused=false)→ 此点击=暂停(mixer 须双停)
+                if (!vid4._calls.includes("pause") || !twin4._calls.includes("pause")) fail("mixer pause 未双停(video:" + vid4._calls.join(",") + " twin:" + twin4._calls.join(",") + ")");
+                vid4._calls.length = 0; twin4._calls.length = 0;
+                bPlay.dispatch("click", {});  // 再点=播放(双起)
+                if (!vid4._calls.includes("play") || !twin4._calls.includes("play")) fail("mixer play 未双起");
+                bMute.dispatch("click", {});  // 手势解静音 → twin 翻 false,master 恒 true
+                if (twin4.muted !== false) fail("mute 点击未解静音(twin.muted 应 false)");
+                if (vid4.muted !== true) fail("twin 场景 master 须恒 muted(其 AAC 轨宿主零解码)");
+                vid4.duration = 100; twin4.duration = 100;
+                bSeek.value = "250"; bSeek.dispatch("input", {});  // seek → 双 currentTime
+                if (vid4.currentTime !== 25 || twin4.currentTime !== 25) fail("mixer seek 未双写(vid=" + vid4.currentTime + " twin=" + twin4.currentTime + ")");
+                twin4.currentTime = 1; vid4.dispatch("timeupdate", {});  // 漂移 24s → 主时钟校正
+                if (Math.abs(twin4.currentTime - 25) > 0.01) fail("mixer 漂移校正失效(twin=" + twin4.currentTime + " 应回 25)");
+                twin4.dispatch("error", {});  // 旁路死 → _mpDead 降级
+                if (twin4._mpDead !== true) fail("twin error 未 _mpDead 降级");
             }
         }
     }
-    // --- 场景4b(0.5.28b 阴性):不可判态不消耗重试机会(M4b/M5 幸存者补网) ---
-    await hover(rowPng); await hover(rowMp4); await new Promise(r => setTimeout(r, 900));  // 重渲染取新 video(新 latch)
-    const vid5 = popup4 && popup4._qs(popup4, ".mp-content video");
-    if (vid5) {
-        vid5.webkitAudioDecodedByteCount = 0; vid5.duration = Infinity; vid5.paused = false;
-        await new Promise(r => setTimeout(r, 1600));
-        if (String(vid5.src).includes("vc=webm")) fail("阴性失效:duration=Infinity 期不得消耗重试(误杀慢启动流)");
-        vid5.duration = 100; vid5.paused = true;  // 暂停中也不判(用户首秒暂停不被强制续播)
-        await new Promise(r => setTimeout(r, 1300));
-        if (String(vid5.src).includes("vc=webm")) fail("阴性失效:暂停中不得判(M4b:用户首秒暂停被 1s 重试强制续播)");
+
+    // --- 场景5(0.5.29):走廊守卫——指针在 popup↔源行缓冲走廊内不关浮窗;离开后正常关 ---
+    await hover(rowPng);
+    const popup5 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    if (popup5 && popup5.style.display !== "none") {
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 200, clientY: 200 }));  // 指针进走廊(stub popup rect 100..500/100..400,+24 缓冲含 200,200)
+        const mm5 = explorerRoot._listeners.get("mousemove");
+        if (mm5 && mm5.length) mm5[mm5.length - 1]({ target: explorerRoot, clientX: 200, clientY: 200 });  // 非行区 mousemove → 计划关闭
+        await new Promise(r => setTimeout(r, 900));  // > 400ms 媒体延时 + 250ms 重查一轮
+        if (popup5.style.display === "none") fail("走廊守卫失效:指针在走廊内浮窗被关(慢速移向控件条闪烁回归)");
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 1500, clientY: 1500 }));  // 离开走廊
+        if (mm5 && mm5.length) mm5[mm5.length - 1]({ target: explorerRoot, clientX: 1500, clientY: 1500 });
+        await new Promise(r => setTimeout(r, 700));
+        if (popup5.style.display !== "none") fail("离开走廊后未正常关闭(死悬窗)");
     }
-    console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
+    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
+
+console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }
 
 await scenario();

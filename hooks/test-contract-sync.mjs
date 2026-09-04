@@ -109,4 +109,8 @@ if (!/e\.preventDefault\(\); e\.stopPropagation\(\);[\s\S]{0,150}resetImageZoom\
 if (!/savePopupSize\(popup\.offsetWidth, popup\.offsetHeight\);[\s\S]{0,150}resetImageZoom\(popup\)/.test(overlay)) fail("resize onUp 未调 resetImageZoom(拖角+滚动并发竞态残留)");
 
 if (fails) { console.error(`\nFAIL: test-contract-sync（${fails} 处跨边界同步失配）`); process.exit(1); }
+// 0.5.29c 🟡-4:root↔companion 版本等值(曾漂移 5 版——重装 vsix 即回退)
+const rootV = JSON.parse(readFileSync(base + "package.json", "utf8")).version;
+const compV = JSON.parse(readFileSync(base + "companion/package.json", "utf8")).version;
+if (rootV !== compV) fail("root(" + rootV + ") ↔ companion(" + compV + ") 版本漂移——升级路径会整目录替换回旧版");
 console.log("OK: test-contract-sync（per-type exts + port + marker + 3D-loader + CSS-class + fetch优先级 + NATIVE⊆EXTS 全同步）");

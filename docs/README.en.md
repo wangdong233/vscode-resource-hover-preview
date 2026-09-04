@@ -74,7 +74,7 @@ VSCode updates overwrite the patch, but **the companion extension automatically 
 
 > 💡 **Video formats**: mp4/webm/mov play natively; AVI/FLV/MKV and other non-native formats require [ffmpeg](https://ffmpeg.org/) installed locally (auto-transcoded to a browser-playable format; brief delay on first hover).
 >
-> 🔊 **Custom playback bar** (play / seek / mute / volume — the capsule at the bottom of the popup) instead of native VSCode media controls. If your VSCode build lacks the AAC decoder (official builds do — video plays but silently), the extension auto-detects this and transcodes AAC audio to MP3/Opus, so **you get both picture and sound** (transcoding requires local [ffmpeg](https://ffmpeg.org/); without it the preview falls back to native playback — picture, no sound).
+> 🔊 **Custom playback bar** (play / seek / mute / volume — the capsule at the bottom of the popup) instead of native VSCode media controls. If your VSCode build lacks the AAC decoder (official builds do — video plays but silently), videos play from the **original file** (full duration bar, instant seek); since official VSCode lacks the AAC decoder (video plays but silently), audio tracks of AAC-family files (mp4/mov/m4v) are extracted to a cached MP3 sidecar — **picture and sound** (extraction needs local [ffmpeg](https://ffmpeg.org/), cached on disk; without it, picture only).
 
 ---
 

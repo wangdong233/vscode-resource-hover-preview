@@ -4,7 +4,8 @@ import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { spawn, execFile } from "child_process";  // 0.5.12:execFile 异步(免 execFileSync 同步阻塞 EH event loop)
+import { spawn, execFile } from "child_process";
+import { createHash } from "crypto";  // 0.5.29:音频旁路缓存键
 
 const BASE_PORT = 17741;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -62,7 +63,8 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     if (url.pathname === "/preview") return servePreview(url, req, res, roots);
     if (url.pathname.startsWith("/lib/")) return serveLib(url, res);  // v0.4: lazy 库（pdf.js/three）
     if (url.pathname === "/rename") return serveRename(url, res, roots, onRenamed);  // 0.4.9 文件改名（overlay 文件名点击触发）
-    if (url.pathname === "/transcode") return serveTranscode(url, req, res, roots);  // 档3:ffmpeg 实时转码（非 web 格式 → MP4/WAV）
+    if (url.pathname === "/transcode") return serveTranscode(url, req, res, roots);  // 档3:ffmpeg 实时转码（非 web 容器视频 → webm/opus 流）
+    if (url.pathname === "/audio") return serveAudioExtract(url, req, res, roots);  // 0.5.29:音轨提取 MP3 磁盘缓存(视频旁路/m4a 主源)
     res.writeHead(404); res.end("not found");
 }
 
@@ -263,4 +265,79 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
     headersSent = true;
     ffmpeg.stdout.pipe(res);
     req.on("close", () => { try { ffmpeg.kill("SIGKILL"); } catch { /* ignore */ } });
+}
+
+// ===== 0.5.29 音频旁路:/audio —— 音轨提取 MP3 磁盘缓存 =====
+// 背景:VSCode 出厂 libffmpeg 无 AAC 解码器(nm 二进制定案)——原生 <video> 的 AAC 轨零解码。
+// 架构:视频回归【原文件直读】(完整时长/秒拖,回归用户要的最初方案形态),音频走旁路:
+//   ffmpeg 提取音轨 → MP3(宿主实持解码器,纯 .mp3 文件零容器变量)→ 磁盘缓存(键=path|size|mtimeMs,
+//   同名覆盖自动失效,与新鲜度哲学一致)→ 完整 Content-Length + Range 服务(audio 元素拿到全量时长)。
+//   .noaudio 负缓存标记(确定性失败)防重复 spawn。首次实测 39s 片 1.36s(≈29× 实时,rig5),此后零成本。
+const AUDIO_CACHE_DIR = path.join(os.homedir(), process.platform === "darwin" ? path.join("Library", "Caches") : ".cache", "vscode-resource-hover-preview");
+const AUDIO_CACHE_MAX_BYTES = 300 * 1024 * 1024;
+function cacheEvict(keepPath: string): void {  // 懒驱逐:超 300MB 删最旧(跳过 keepPath;异常静默——缓存非正确性依赖)
+    try {
+        const entries = fs.readdirSync(AUDIO_CACHE_DIR).map(f => { const p = path.join(AUDIO_CACHE_DIR, f); try { return { p, st: fs.statSync(p) }; } catch { return null; } }).filter(Boolean) as { p: string; st: fs.Stats }[];
+        let total = entries.reduce((a, e) => a + e.st.size, 0);
+        if (total <= AUDIO_CACHE_MAX_BYTES) return;
+        entries.filter(e => e.p !== keepPath).sort((a, b) => a.st.mtimeMs - b.st.mtimeMs).forEach(e => {
+            if (total <= AUDIO_CACHE_MAX_BYTES) return;
+            try { fs.unlinkSync(e.p); total -= e.st.size; } catch { /* ignore */ }
+        });
+    } catch { /* ignore */ }
+}
+// 静态文件 Range 服务(完整 Content-Length → <audio> 全量时长;audio/mpeg)
+function serveStaticAudio(file: string, stat: fs.Stats, etag: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+    const range = req.headers.range;
+    const base = { "Content-Type": "audio/mpeg", "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "ETag": etag };
+    if (req.headers["if-none-match"] === etag) { res.writeHead(304, { "ETag": etag, "Cache-Control": "no-cache" }); res.end(); return; }
+    if (range) {
+        const m = /^bytes=(\d+)-(\d*)$/.exec(range);
+        if (!m) { res.writeHead(416); res.end("invalid range"); return; }
+        const start = parseInt(m[1], 10), end = Math.min(m[2] ? parseInt(m[2], 10) : stat.size - 1, stat.size - 1);
+        if (start > end || start >= stat.size) { res.writeHead(416); res.end("unsatisfiable"); return; }
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${stat.size}`, "Content-Length": end - start + 1 });
+        streamOut(fs.createReadStream(file, { start, end }), res); return;
+    }
+    res.writeHead(200, { ...base, "Content-Length": stat.size });
+    streamOut(fs.createReadStream(file), res);
+}
+async function serveAudioExtract(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
+    let file = url.searchParams.get("file");
+    if (!file) { res.writeHead(400); res.end("missing file"); return; }
+    if (file.startsWith("~")) file = file.replace(/^~/, os.homedir());
+    const resolved = path.resolve(file);
+    let realPath: string;
+    try { realPath = fs.realpathSync(resolved); } catch { res.writeHead(404); res.end("not found"); return; }
+    if (roots.length > 0) {  // containment 同 /preview
+        const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
+        if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) { res.writeHead(403); res.end("outside workspace"); return; }
+    }
+    let stat: fs.Stats;
+    try { stat = fs.statSync(realPath); if (!stat.isFile()) throw 0; } catch { res.writeHead(404); res.end("not found"); return; }
+    if (stat.size > MAX_FILE_SIZE) { res.writeHead(413); res.end("too large"); return; }
+    const key = createHash("sha1").update(realPath + "|" + stat.size + "|" + stat.mtimeMs).digest("hex").slice(0, 24);
+    const cached = path.join(AUDIO_CACHE_DIR, key + ".mp3"), marker = path.join(AUDIO_CACHE_DIR, key + ".noaudio");
+    if (fs.existsSync(marker)) { res.writeHead(404); res.end("no audio"); return; }  // 负缓存:无音轨/提取失败(文件变更→新键自动失效)
+    if (!fs.existsSync(cached)) {
+        const ff = await findFfmpeg();
+        if (!ff) { res.writeHead(404); res.end("no ffmpeg"); if (!_ffMissingLogged) { _ffMissingLogged = true; console.error("[mp] /audio 需 ffmpeg——候选路径(ffmpeg//usr/local/bin//opt/homebrew/bin//usr/bin)均未找到;音频旁路不可用"); } return; }
+        try { fs.mkdirSync(AUDIO_CACHE_DIR, { recursive: true }); } catch { res.writeHead(500); res.end("cache dir"); return; }
+        const tmp = cached + "." + Date.now() + ".mp3";  // ⚠️ 须 .mp3 后缀:ffmpeg 按扩展名推输出格式,.tmp 会 "no suitable output format"(0.5.29 rig 实证;配合显式 -f mp3 双保险)
+        let ffTimeout = false;
+        const ok = await new Promise<boolean>(r2 => execFile(ff, ["-i", realPath, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-f", "mp3", tmp], { timeout: 120000 }, (e: Error | null, _so?: string, se?: string) => {
+            if (e) { ffTimeout = !!(e as { killed?: boolean }).killed; console.error("[mp] /audio 提取失败" + (ffTimeout ? "(超时)" : "") + ":", (se || e.message || "").slice(0, 300)); }
+            r2(!e);
+        }));  // 0.5.29:stderr 留痕(静默失败必留痕)
+        try {
+            const st2 = ok ? fs.statSync(tmp) : null;
+            if (st2 && st2.size > 0) fs.renameSync(tmp, cached);  // 原子落位(并发双写者 last-win 无害)
+            else { try { fs.unlinkSync(tmp); } catch { /* ignore */ } if (!ffTimeout) fs.writeFileSync(marker, "");  // 0.5.29c 🟡-1:超时(killed)不落负缓存——瞬时失败允许下轮重试;仅确定性失败(无音轨/encode 错)负缓存
+                res.writeHead(404); res.end("no audio"); return; }
+        } catch { try { fs.unlinkSync(tmp); } catch { /* ignore */ } res.writeHead(500); res.end("extract error"); return; }
+        cacheEvict(cached);
+    }
+    let cstat: fs.Stats;
+    try { cstat = fs.statSync(cached); } catch { res.writeHead(500); res.end("cache miss"); return; }
+    serveStaticAudio(cached, cstat, etagOf(cstat), req, res);  // 0.5.29c 🔴-1修:原手写字面量笔误(movflags 同族),改 etagOf(缓存键内容寻址,同键字节不变/覆盖换键恒新)
 }

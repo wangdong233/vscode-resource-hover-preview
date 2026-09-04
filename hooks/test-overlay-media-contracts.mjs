@@ -22,7 +22,7 @@ if (mutedCount !== 1) fail(`video.muted = true 应恰 1 处(renderVideo muted �
 if (/\.controls = true/.test(ov)) fail("禁 media.controls = true(0.5.27:原生 UA 控件=闭影 DOM,VSCode 环境交互死+CDP 不可测——控件面唯一来源须为 mp-mb)");
 if (!/video\.preload = "metadata"/.test(ov)) fail("renderVideo 须 preload=metadata(离屏先取元数据)");
 if (!/var settled = false;/.test(ov) || !/settled = true;/.test(ov)) fail("settle latch 缺失(settle-before-show 单次入口契约)");
-if (!/content\.replaceChildren\(video, buildMediaBar\(video\)\);/.test(ov)) fail("video+mp-mb 须同刻一次性插入(可见后几何不变,S1)");
+if (!/content\.replaceChildren\.apply\(content, kids\);/.test(ov) || !/buildMediaBar\(mixer\)/.test(ov)) fail("video+twin+bar 须同刻插入(kids 数组,bar 绑 mixer;S1)");
 if (!/content\.replaceChildren\(audio, buildMediaBar\(audio\)\);/.test(ov)) fail("audio 须同款 mp-mb(同一组件双消费,原生控件同族死按钮风险)");
 if (/点击播放/.test(ov)) fail("S4 ▶fallback 须已删(0.5.27 被 mp-mb play 按钮手势路径覆盖,残留=双路径)");
 if (!/function buildMediaBar\(media\)/.test(ov)) fail("buildMediaBar 组件缺失");
@@ -30,16 +30,20 @@ if (!/media\.muted = !media\.muted; if \(!media\.muted && media\.volume === 0\) 
 if (!/isFinite\(media\.duration\) && media\.duration > 0\) media\.currentTime/.test(ov)) fail("seek 须守 isFinite(duration)(/transcode fMP4 空_moov 期 duration=Infinity)");
 if (!/media\.addEventListener\("volumechange"/.test(ov) || !/media\.addEventListener\("timeupdate"/.test(ov)) fail("mp-mb 须监听 volumechange/timeupdate(控件态与媒体态双向同步)");
 
-// 2.5 0.5.27 🔴根因路由契约:VSCode 出厂 libffmpeg 无 AAC(二进制已验)→ AAC 轨 HasAudio()=false → 原生 mute 死键+无声
-if (/AAC_OK/.test(ov) || /mediaCapabilities/.test(ov)) fail("0.5.28:能力探测已删——decodingInfo 查编译期静态表,stripped-ffmpeg 下说谎(表称支持/实际无解码器),用户实测零声主因");
-if (!/var AAC_FAMILY = \["mp4", "mov", "m4v", "m4a", "aac"\];/.test(ov) || !/if \(AAC_FAMILY\.indexOf\(ext\) >= 0\) return t;/.test(ov)) fail("0.5.28:AAC 家族须恒路由 /transcode(无探测;VSCode 必无 AAC,full-ffmpeg 自建仅付 ~0.5s remux)");
-if (!/var nativeFallbackTried = false;/.test(ov) || !/video\.src\.indexOf\("\/transcode"\) >= 0/.test(ov)) fail("🔴-1:转码路死(无 ffmpeg 404)且原生可播时须回退 previewUrl 一次(0.5.27d 对抗审——否则无 ffmpeg 宿主 mp4 报错卡回归)");
-if (!/if \(document\.activeElement !== seek\) seek\.value/.test(ov)) fail("🟡-1:seek 须 activeElement 守卫(拖动中不被 timeupdate 覆写)");
-if (!/mp-mb-narrow/.test(ov) || !/mp-mb-tiny/.test(ov)) fail("🟡-4:窄窗自适应档位缺失(<300 藏 time,<250 藏 vol)");
-if (!/var audioRetryTried = false;/.test(ov) || !/mediaUrl\(filePath, "video", "webm"\)/.test(ov) || !/webkitAudioDecodedByteCount \|\| 0\) > 0/.test(ov)) fail("0.5.28 自愈梯缺失:路由态验声零解码须强制 vc=webm 整转重试一次(URL 须经 mediaUrl 单点构造)");
-if (!/ladderChecks > 12/.test(ov) || !/readyState < 2/.test(ov)) fail("0.5.28b 软边:不可判态(duration 未到/缓冲/暂停)须 500ms 重查且不消耗机会(≤12 轮),防误杀慢启动流/防首秒暂停被强制续播");
-if (!/音频零解码/.test(ov)) fail("自愈梯触发须 console.warn 留痕(静默降级必留痕铁律)");
-if (/\.controls = true/.test(ov)) fail("禁 controls=true(重复检查)");
+// 2.5 0.5.29 🔴架构回归契约(用户裁决:回到最初方案基底——视频原文件直读+MP3 音频旁路)
+if (/AAC_OK/.test(ov) || /mediaCapabilities/.test(ov)) fail("禁能力探测(编译期静态表在 stripped-ffmpeg 下说谎,0.5.28 定案)");
+if (/AAC_FAMILY/.test(ov) || /audioRetryTried/.test(ov) || /vc=webm/.test(ov)) fail("0.5.27/28 转码路由/自愈梯已废弃(流式=进度条渐进+闪烁,用户实测否决)——禁止回流");
+if (!/var TWIN_NEEDED = \["mp4", "mov", "m4v"\];/.test(ov)) fail("TWIN_NEEDED 家族缺失(AAC 家族视频需 MP3 旁路;webm 音轨宿主可解不需)");
+if (!/twin\.src = audioUrl\(filePath\);/.test(ov) || !/function audioUrl\(p\)/.test(ov)) fail("twin 须以 audioUrl(单一构造点)接 /audio 提取端点");
+if (!/Math\.abs\(a\.currentTime - master\.currentTime\) > 0\.2/.test(ov)) fail("mixer 漂移校正缺失(阈值 0.2s,主时钟=视频)");
+if (!/master\.addEventListener\("seeking"/.test(ov) || !/master\.addEventListener\("ratechange"/.test(ov)) fail("mixer 须 seek 即时对齐 + ratechange 跟随");
+if (!/a\.muted = m; if \(!m && !master\.paused && a\.paused\)/.test(ov) || !/master\.muted = true; \} else master\.muted = m;/.test(ov)) fail("twin 场景 master 须恒 muted;解静音手势内 twin 未随主起播须即刻补起(0.5.29b rig 实证)");
+if (!/twin\._mpDead = true;/.test(ov)) fail("twin error 须 _mpDead 降级(mixer mute/volume 落回 master)");
+if (!/video\.src = mediaUrl\(filePath, "video"\);/.test(ov)) fail("视频须原文件 mediaUrl 直读(原生家族=/preview 完整时长秒拖)");
+if (/nativeFallbackTried/.test(ov)) fail("0.5.27d 转码回退已随恒路由废弃删除(原生家族不再走 /transcode,该分支不可达)");
+if (!/inTransitCorridor/.test(ov) || (ov.match(/inTransitCorridor\(\)/g) || []).length < 5) fail("0.5.29 走廊守卫缺失(定义+四处 hideTimer fire-time:慢速移向控件条 400ms 窗击穿→闪烁)");
+if (!/ext === "m4a" \|\| ext === "aac"\) \? audioUrl\(filePath\)/.test(ov)) fail("renderAudio 须 m4a/aac 走 /audio 提取主源");
+if (!/querySelectorAll\("#mp-popup \.mp-content video, #mp-popup \.mp-content audio"\)/.test(ov)) fail("dispose 须 querySelectorAll 双媒体清理(视频+旁路 twin)");
 
 // 3. 缩放契约(0.5.22 增:上限 1000 实际无限 + pan + rail 复原按钮)
 if (!/ZOOM_MAX = 1000/.test(ov)) fail("ZOOM_MAX 须 1000(用户决策解除放大上限;千倍=浮点护栏)");

@@ -120,23 +120,54 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
     function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
     // 档3:非原生格式走 /transcode(ffmpeg 转码);原生走 /preview
-    // 0.5.28 🔴根因二修(用户实测:控件活但零声):0.5.27 用运行时能力 API 探测 AAC(decodingInfo)不可靠——
-    //   Chromium 能力表按【编译期 proprietary_codecs】静态声明,不反映 VSCode 出厂 libffmpeg 实际未带 AAC 解码器
-    //   → 表说 supported、实际解码零 → 探测恒真 → 从未路由 → 原生 AAC 静音。
-    //   修正 = 确定性路由(无探测):AAC 家族【恒走 /transcode】(h264 源 remux 实测 85× 实时,成本可忽略;
-    //   mp3 解码器 ff_mp3_decoder 在 VSCode 实持集合内)。
-    //   二层自愈:播放 1s 后验声(webkitAudioDecodedByteCount===0 → 强制 webm/opus 整转重试一次,兜 mp3-in-mp4
-    //   demux 兼容缺口/异构音轨;见 renderVideo audioRetry)。三层:转码 error → 回退原生一次(🔴-1)。
-    var AAC_FAMILY = ["mp4", "mov", "m4v", "m4a", "aac"];
-    // ⚠️ 长片取舍记档(0.5.28b):/transcode 响应无 Range/无 Content-Length——长视频 seek 限于已转码前缀,duration=Infinity
-    //   期进度条禁拖(原生路径是全量 Range seek 的降级;短片无感,remux 85× 实时使前缀通常远超播放头)。
-    function mediaUrl(p, type, vc) {  // vc="webm" = 自愈梯强制重编码路(R-INT-04:URL 单一构造点,勿手拼)
+    // 0.5.29 🔴架构回归(用户裁决:回到最初方案基底):视频【原文件直读】(/preview Range——完整时长/秒拖/零流式闪烁),
+    //   声音走 MP3 旁路(VSCode 出厂 libffmpeg 无 AAC 解码器,nm 二进制定案;MP3 解码器必有且纯 .mp3 零容器变量):
+    //   AAC 家族视频(mp4/mov/m4v)视频元素恒 muted + 独立 <audio>(/audio 提取缓存)经 makeMixer 主从同步;
+    //   webm 家族音轨(vorbis/opus)宿主可解 → 单元素原生;非 web 容器(mkv/avi/flv)仍 /transcode 流(最初方案亦不能播)。
+    //   0.5.27/28 的转码路由/自愈梯整体废弃(流式=进度条渐进+缓冲闪烁,用户实测否决)。
+    function mediaUrl(p, type) {
         var ext = (p.split(".").pop() || "").toLowerCase();
         var isNative = (type === "video" && NATIVE_VIDEO.indexOf(ext) >= 0) || (type === "audio" && NATIVE_AUDIO.indexOf(ext) >= 0);
-        var t = SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + (vc ? "&vc=" + vc : "") + "&token=" + encodeURIComponent(TOKEN);
-        if (!isNative) return t;
-        if (AAC_FAMILY.indexOf(ext) >= 0) return t;  // AAC 家族恒路由:VSCode 必无 AAC 解码器(官方构建);full-ffmpeg 自建 VSCode 也仅付 ~0.5s remux
-        return previewUrl(p, type);
+        return isNative ? previewUrl(p, type) : (SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN));
+    }
+    // 0.5.29 audioUrl:/audio 音轨提取 MP3 缓存端点(单一构造点;server 端完整 Content-Length+Range → <audio> 全量时长)
+    function audioUrl(p) { return SERVER_BASE + "/audio?file=" + encodeURIComponent(p) + "&token=" + encodeURIComponent(TOKEN); }
+    var TWIN_NEEDED = ["mp4", "mov", "m4v"];  // AAC 家族视频需要旁路;webm(可解音轨)不需要
+    // 0.5.29 makeMixer:双元素音画同步控制器(主时钟=视频元素,音频旁路从动)。接口与单 media 元素同形(buildMediaBar 零改动):
+    //   漂移>0.2s 以主时钟校正 / seek·play·pause 即时对齐 / ratechange 跟随 / muted·volume 落在 twin(无 twin 落 master)。
+    function makeMixer(master, twinEl) {
+        var ax = function () { return (twinEl && !twinEl._mpDead) ? twinEl : null; };
+        var L = {};
+        var fire = function (t) { (L[t] || []).slice().forEach(function (f) { try { f({}); } catch (e) {} }); };
+        ["play", "pause", "ended", "timeupdate", "durationchange", "seeking"].forEach(function (t) { master.addEventListener(t, function () { fire(t); }); });
+        master.addEventListener("volumechange", function () { fire("volumechange"); });
+        if (twinEl) twinEl.addEventListener("volumechange", function () { fire("volumechange"); });
+        var syncTwin = function () {
+            var a = ax(); if (!a) return;
+            if (!master.paused && a.paused && master.currentTime < a.duration - 0.05) { try { a.currentTime = master.currentTime; } catch (e) {} var p = a.play(); if (p && p.catch) p.catch(function () {}); }  // 0.5.29c 🟡-2:音短于视频的源,尾部不再重启 twin(否则 ended→play 从 0 重播→漂移拽回=4Hz 循环)
+            else if (master.paused && !a.paused) a.pause();
+            if (!a.paused && Math.abs(a.currentTime - master.currentTime) > 0.2) { try { a.currentTime = master.currentTime; } catch (e) {} }  // 漂移校正(主时钟=视频)
+        };
+        master.addEventListener("timeupdate", syncTwin);
+        master.addEventListener("seeking", function () { var a = ax(); if (a) { try { a.currentTime = master.currentTime; } catch (e) {} } });
+        master.addEventListener("play", syncTwin);
+        master.addEventListener("pause", syncTwin);
+        master.addEventListener("ratechange", function () { var a = ax(); if (a) { try { a.playbackRate = master.playbackRate; } catch (e) {} } });
+        master.addEventListener("ended", function () { var a = ax(); if (a && !a.paused) a.pause(); });
+        return {
+            get paused() { return master.paused; },
+            get duration() { return master.duration; },
+            get currentTime() { return master.currentTime; },
+            set currentTime(t) { master.currentTime = t; var a = ax(); if (a) { try { a.currentTime = t; } catch (e) {} } },
+            get muted() { var a = ax(); return a ? a.muted : master.muted; },
+            set muted(m) { var a = ax(); if (a) { a.muted = m; if (!m && !master.paused && a.paused) { try { a.currentTime = master.currentTime; } catch (e) {} var p1 = a.play(); if (p1 && p1.catch) p1.catch(function () {}); } master.muted = true; } else master.muted = m; },  // twin 场景 master 恒 muted;0.5.29b:解静音手势内若 twin 未随主起播则即刻补起(rig 实证 headless 下 timeupdate 补起不可靠,手势内是最强保障)
+            get volume() { var a = ax(); return a ? a.volume : master.volume; },
+            set volume(v) { var a = ax(); if (a) a.volume = v; else master.volume = v; },
+            play: function () { var a = ax(); if (a) { try { a.currentTime = master.currentTime; } catch (e) {} var p1 = a.play(); if (p1 && p1.catch) p1.catch(function () {}); } return master.play(); },
+            pause: function () { var a = ax(); if (a) a.pause(); master.pause(); },
+            addEventListener: function (t, f) { (L[t] = L[t] || []).push(f); },
+            removeEventListener: function () { },
+        };
     }
     // fetcherFor：类型分派取数据 → {data, bytes}。
     // ★ 0.4.7 根因修：font/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
@@ -441,7 +472,8 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
             if (!isPinned) {
                 if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function () { if (!isPinned && !isPanning && Date.now() >= zoomGeomGrace) { hidePopup(); currentHovered = null; } }, hideDelayMs());  // 0.5.22:+!isPanning(pan 中指针已离 popup,防 400ms 后销毁拖拽中的图);0.5.25:+几何宽限让位(点复原按钮 rail 缩走误发的 mouseleave)
+                var leaveHide = function () { if (!isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (inTransitCorridor()) { hideTimer = setTimeout(leaveHide, 250); return; } hidePopup(); currentHovered = null; } };  // 0.5.29:+走廊守卫(慢速移向控件条 400ms 窗击穿→闪烁)
+                hideTimer = setTimeout(leaveHide, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位
             }
         });
     }
@@ -515,9 +547,9 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         // v0.2-v0.5审查🟡：按 type 路由 dispose（防 FontFace/PDF worker/geometry 累积）
         if (activeRendererType === "3d" && typeof dispose3D === "function") dispose3D();
         else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
-        else if (activeRendererType === "video" || activeRendererType === "audio") {  // 0.5.24🔴R2修:摘除的播放媒体继续出声/继续拉 /transcode 流——pause+断 src+load() 释放解码器与网络(单清理点对齐 3d/font 范式)
-            var dMed = document.querySelector("#mp-popup .mp-content video, #mp-popup .mp-content audio");
-            if (dMed) { try { var p = dMed.pause(); if (p && p.catch) p.catch(function () {}); dMed.removeAttribute("src"); dMed.load(); } catch (e) { /* ignore */ } }
+        else if (activeRendererType === "video" || activeRendererType === "audio") {  // 0.5.24🔴R2修+0.5.29:全部媒体元素(视频+旁路 twin+音频条)逐一 pause+断 src+load(twin 入 DOM,单一清理路径)
+            var dMeds = document.querySelectorAll("#mp-popup .mp-content video, #mp-popup .mp-content audio");
+            for (var di = 0; di < dMeds.length; di++) { try { var p = dMeds[di].pause(); if (p && p.catch) p.catch(function () {}); dMeds[di].removeAttribute("src"); dMeds[di].load(); } catch (e) { /* ignore */ } }
         }
         activeRendererType = null;
     }
@@ -539,7 +571,8 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
                 // 鼠标离开文件项区域 → 计划隐藏
                 if (currentHovered && !isPinned) {
                     if (hideTimer) clearTimeout(hideTimer);
-                    hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位(rail-left 变体下光标可悬 explorer 区,此路径也可达)
+                    var awayHide2 = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(awayHide2, 250); } };  // 0.5.29:+走廊守卫;currentHovered 仅真关时清(走廊保活期回行 dedup 防重渲染闪烁)
+                    hideTimer = setTimeout(awayHide2, hideDelayMs());
                 }
                 return;
             }
@@ -555,11 +588,26 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             if (currentHovered && !isPinned) {
                 if (hoverTimer) clearTimeout(hoverTimer);
                 if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位(同上,root mouseleave 兜底路径)
+                var awayHide3 = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(awayHide3, 250); } };
+                hideTimer = setTimeout(awayHide3, hideDelayMs());
             }
         });
     }
     function isMouseInPopup() { var p = document.getElementById("mp-popup"); return p && p.matches(":hover"); }
+    // 0.5.29 走廊守卫:指针在 popup 与源文件行之间的缓冲走廊(各向外扩 24px 的包围盒)→ 不关浮窗,250ms 后再查。
+    // 根因:hideTimer 400ms 窗口只覆盖"快速移动",慢速移向底部控件条时窗口击穿 → hide→re-hover→重渲染 = 用户实测的闪烁抖动。
+    // 指针停走廊=意图不明,保活是安全默认(回到行/popup 即恢复常规语义)。
+    function inTransitCorridor() {
+        if (lastMX < 0) return false;
+        var p = document.getElementById("mp-popup");
+        if (!p || p.style.display === "none") return false;
+        var r = p.getBoundingClientRect();
+        var l = r.left - 24, t = r.top - 24, rr = r.right + 24, b = r.bottom + 24;
+        if (currentHovered && currentHovered.getBoundingClientRect) {
+            try { var c = currentHovered.getBoundingClientRect(); l = Math.min(l, c.left - 24); t = Math.min(t, c.top - 24); rr = Math.max(rr, c.right + 24); b = Math.max(b, c.bottom + 24); } catch (e) {}
+        }
+        return lastMX >= l && lastMX <= rr && lastMY >= t && lastMY <= b;
+    }
     // 0.5.25 复位几何宽限:🔴点复原按钮=浮窗瞬间消失(用户实测)。根因≠窗缩——是 rail 在光标下缩走:
     //   点击 zoomBtn → gap2(12px)+按钮(28px)同时隐藏 → rail 自底缩 ~40px → 光标正落在原按钮位=rail 新盒之外
     //   → Chromium 对"元素自光标下移走"补发 popup mouseleave → 200ms 后误关。resetBtn(尺寸复原)在窗被手动
@@ -697,62 +745,43 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         activeRendererType = "video";
         var popup = document.getElementById("mp-popup");
         var content = popup.querySelector(".mp-content");
+        var ext = (filePath.split(".").pop() || "").toLowerCase();
         var video = document.createElement("video");
         video.preload = "metadata";  // 离屏先取 metadata(本地/流式均早到)
-        video.src = mediaUrl(filePath, "video");
-        video.muted = true; video.playsInline = true;  // 无 controls 属性/属性置 true 皆禁——控件面唯一来源=mp-mb(单一路径)
+        video.src = mediaUrl(filePath, "video");  // 0.5.29 原生基底:mp4/mov/m4v/webm = 原文件 /preview(完整时长/秒拖);mkv/avi/flv = /transcode 流
+        video.muted = true; video.playsInline = true;  // muted 起播(autoplay 恒过);AAC 家族永久 muted(makeMixer 保证 unmute 落 twin),webm 家族 unmute 直接落本元素
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
         video.addEventListener("click", function () { if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); } else video.pause(); });  // 点击画面切播放(媒体播放器惯例;与 pan/drag 无冲突——video 在 DRAG_SKIP)
+        // 0.5.29 音频旁路:AAC 家族(mp4/mov/m4v)建 twin(detached <audio>,离 DOM 可播);提取失败/无音轨 → _mpDead 降级单元素
+        var twin = null;
+        if (TWIN_NEEDED.indexOf(ext) >= 0) {
+            twin = document.createElement("audio");
+            twin.preload = "auto"; twin.muted = true; twin.style.display = "none";
+            twin.src = audioUrl(filePath);
+            twin.addEventListener("error", function () {
+                if (ep !== renderEpoch) return;
+                twin._mpDead = true;  // mixer 即刻降级(mute/volume 落回 master);不 retry(无 ffmpeg/无音轨皆终局)
+                try { twin.removeAttribute("src"); twin.load(); } catch (e2) {}
+                try { console.warn("[mp] 音频旁路不可用(无 ffmpeg/无音轨):", filePath.slice(-64)); } catch (e3) {}
+            });
+        }
+        var mixer = makeMixer(video, twin);  // twin=null(webm/非原生)时 mixer 退化为单元素直通
         var settled = false;
-        var nativeFallbackTried = false;  // 0.5.27d 🔴-1修(对抗审):AAC 路由把 mp4 系送 /transcode 后,无 ffmpeg 宿主 404 → 原生可播文件反成报错卡(0.5.26 同机是"有画无声"可用态)。回退原生一次
-        var audioRetryTried = false;  // 0.5.28 自愈梯标记(防循环)
         var settle = function () {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
             if (settled || ep !== renderEpoch) return; settled = true;
             if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect);
             else if (rect) placePopup(rect);
-            content.replaceChildren(video, buildMediaBar(video));  // loading 占位此刻一次换掉(video+bar 同刻插入,S1 不变式保持)
-            var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播;被拒也无需兜底(mp-mb play 按钮=手势路径,点它即播)
-            // 0.5.28 自愈梯(0.5.28b 软边修):1s 后验声——路由态音频解码字节仍 0 = mp3-in-mp4 demux 兼容缺口/异构音轨未解
-            //   → 强制 webm/opus 整转重试一次(audioRetryTried 防循环;真无音轨源重试一次即止)。
-            //   可判性:健康(解码>0)即止;确定坏(duration 有限+readyState≥2+非 seeking+在播+零解码)→ 重试;
-            //   暂不可判(元数据未到/缓冲中/暂停)→ 500ms 后再查【不消耗一次性机会】(防误杀慢启动流/防首秒暂停被强制续播),
-            //   至多 12 轮(~7s)放弃。触发时 warn 留痕(静默降级必留痕铁律)。
-            var ladderChecks = 0;
-            var ladder = function () {
-                if (ep !== renderEpoch || audioRetryTried) return;
-                if (video.src.indexOf("/transcode") < 0) return;
-                if ((video.webkitAudioDecodedByteCount || 0) > 0) return;  // 声音在解 → 健康
-                if (!isFinite(video.duration) || video.duration <= 0 || video.readyState < 2 || video.seeking || video.paused) {
-                    if (++ladderChecks > 12) return;
-                    setTimeout(ladder, 500);
-                    return;
-                }
-                audioRetryTried = true;
-                try { console.warn("[mp] 音频零解码 → 重试 webm 整转:", filePath.slice(-64), "decoded=", video.webkitAudioDecodedByteCount); } catch (e) {}
-                var at = video.currentTime;
-                video.src = mediaUrl(filePath, "video", "webm");
-                video.addEventListener("loadedmetadata", function retryGo() {
-                    video.removeEventListener("loadedmetadata", retryGo);
-                    if (ep !== renderEpoch) return;
-                    try { video.currentTime = at; } catch (e) {}
-                    var pr2 = video.play(); if (pr2 && pr2.catch) pr2.catch(function () {});
-                });
-                video.load();
-            };
-            setTimeout(ladder, 1000);
+            var kids = [video]; if (twin) kids.push(twin); kids.push(buildMediaBar(mixer));
+            content.replaceChildren.apply(content, kids);  // loading 占位此刻一次换掉(video+twin+bar 同刻插入,S1;twin display:none 入 DOM——dispose 单一 DOM 清理路径覆盖)
+            var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播(策略恒过);mixer.timeupdate 会拉起 twin 对齐加入
         };
         video.addEventListener("loadedmetadata", settle);
         setTimeout(settle, 600);  // 兜底:metadata 迟到也出画面(默认 400×300);迟到后不二次改尺寸(防跳)
         video.addEventListener("error", function () {
-            if (ep !== renderEpoch) return;
-            if (!nativeFallbackTried && video.src.indexOf("/transcode") >= 0) {  // 转码路死(无 ffmpeg/进程崩)且该文件原生可播 → 回退原生(画面保住;声音在无 AAC 宿主本就无解,原生/转码皆然)
-                var vext0 = (filePath.split(".").pop() || "").toLowerCase();
-                if (NATIVE_VIDEO.indexOf(vext0) >= 0) { nativeFallbackTried = true; video.src = previewUrl(filePath, "video"); var pf = video.play(); if (pf && pf.catch) pf.catch(function () {}); return; }
-            }
-            settled = true;  // latch:错误后不再 settle
+            if (ep !== renderEpoch) return; settled = true;  // latch:错误后不再 settle
             var vext = (filePath.split(".").pop() || "").toLowerCase();
             if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); return; }  // 非原生(avi/flv/mkv)失败 → 静默关(用户要求不做提醒)
-            else showPopupError("video 加载失败");
+            else { disposeContent(); showPopupError("video 加载失败"); }  // 0.5.29c 🟡-3:先 dispose(pause+断src 双媒体)——否则已解静音的 twin 在错误卡下继续出声(幽灵音频)
         });
     }
 
@@ -761,13 +790,20 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     function renderAudio(filePath, ep, rect) {
         activeRendererType = "audio";
         var content = document.querySelector(".mp-content");
+        var ext = (filePath.split(".").pop() || "").toLowerCase();
         var audio = document.createElement("audio");
-        audio.src = mediaUrl(filePath, "audio");
-        audio.style.display = "none";  // 无 controls 的 audio 无视觉;交互面全部走 mp-mb
+        // 0.5.29:m4a/aac(宿主无解码)→ /audio 提取 MP3 缓存主源(失败回退原生);mp3/wav/ogg/flac/opus 原生直读;aiff 走 /transcode WAV
+        audio.src = (ext === "m4a" || ext === "aac") ? audioUrl(filePath) : mediaUrl(filePath, "audio");
+        audio.preload = "auto"; audio.style.display = "none";  // 无 controls 视觉;交互面全部走 mp-mb
         content.replaceChildren(audio, buildMediaBar(audio));
         var popup = document.getElementById("mp-popup");  // 音频无视觉内容 → popup 折叠成细横条(mp-mb 即全部内容)
         if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "360px"; if (rect) placePopup(rect); }
-        audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
+        var nativeAudioTried = false;
+        audio.addEventListener("error", function () {
+            if (ep !== renderEpoch) return;
+            if (!nativeAudioTried && audio.src.indexOf("/audio") >= 0) { nativeAudioTried = true; audio.src = mediaUrl(filePath, "audio"); audio.load(); return; }  // 提取失败(无 ffmpeg)→ 原生回退(无 AAC 宿主会再 error→错误卡;有解码宿主可正常)
+            showPopupError("audio 加载失败");
+        });
     }
 
     // v0.3 字体：FontFace ArrayBuffer 源（免 font-src CSP）+ canvas glyph grid（doc08 §3）。走缓存（arrayBuffer 直存）。
@@ -1016,7 +1052,8 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         zoomGeomHold = false;
         if (!isMouseInPopup() && !isPinned && !isPanning) {
             if (hideTimer) clearTimeout(hideTimer);
-            hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) hidePopup(); currentHovered = null; }, hideDelayMs());
+            var holdHide = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(holdHide, 250); } };
+            hideTimer = setTimeout(holdHide, hideDelayMs());
         }
     }, true);
 

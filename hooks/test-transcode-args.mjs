@@ -38,6 +38,12 @@ if (!hasRemux) fail("缺 h264 remux 路(-c:v copy + libmp3lame;h264 源零重编
 if (!hasProbe) fail("缺 ffprobe 探测源视频编码(vcodec=h264 分流)");
 if (!hasVpx || !hasOpus || !hasScale) fail("缺 webm 重编码路(libvpx/libopus/scale=640;非 h264 源)");
 if (/"-c:a",\s*"aac"/.test(src)) fail("转码输出残留 -c:a aac(🔴VSCode libffmpeg 无 AAC 解码器=音轨死键回归;音频输出只允许 pcm_s16le/libmp3lame/libopus)");
+// 2.5 0.5.29 /audio 音轨提取契约(视频音频旁路/m4a 主源)
+if (!/"-vn",\s*"-c:a",\s*"libmp3lame",\s*"-b:a",\s*"192k",\s*"-ar",\s*"44100",\s*"-f",\s*"mp3"/.test(src)) fail("/audio 提取参数缺失(-vn+libmp3lame 192k+-ar 44100+-f mp3;显式容器防 tmp 后缀类失败)");
+if (!/\." \+ Date\.now\(\) \+ "\.mp3"/.test(src)) fail("/audio tmp 须 .mp3 后缀(ffmpeg 按扩展名推输出格式;.tmp=rig 实证失败)");
+if (!/\.noaudio/.test(src) || !/createHash/.test(src)) fail("/audio 负缓存标记(.noaudio)或缓存键(sha1 path|size|mtimeMs)缺失");
+if (!/serveStaticAudio/.test(src) || !/Content-Length/.test(src)) fail("/audio 须静态 Range 服务(完整 Content-Length→<audio> 全量时长)");
+if (!/serveStaticAudio\(cached, cstat, etagOf\(cstat\)/.test(src)) fail("/audio ETag 须 etagOf(cstat)(🔴-1:手写字面量曾致 304 永失效)");
 console.log("[1/5] 双路参数抽自源码 ✓ (remux copy+mp3 / webm vpx+opus / movflags=" + movflags + ")");
 
 // ② 同步抽 audio args 里的 wav 编码（防音频路径参数漂移）
@@ -79,6 +85,14 @@ if (!/vp8/.test(pr.stdout || "")) fail("webm 产物无 vp8: " + (pr.stdout || ""
 if (!/opus/.test(pr.stdout || "")) fail("webm 产物无 opus: " + (pr.stdout || "").trim());
 console.log(`[5/5] webm 路: ${r.stdout.length}B → vp8+opus ✓`);
 
+// ⑥ /audio 提取真跑(源码同款参数从含 AAC 的测试样提取 → 产物须纯 mp3)
+const mp3 = TMP + "-x.mp3";
+r = spawnSync(ff, ["-i", avi, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-f", "mp3", mp3, "-y"], { stdio: "ignore", timeout: 30000 });
+if (r.status !== 0) fail("/audio 提取参数真跑失败(status=" + r.status + ")");
+pr = spawnSync(ff.replace(/ffmpeg$/, "ffprobe"), ["-v", "error", "-show_entries", "stream=codec_name", "-of", "csv=p=0", mp3], { encoding: "utf8", timeout: 15000 });
+if (!/^mp3$/m.test((pr.stdout || "").trim())) fail("/audio 产物非纯 mp3: " + (pr.stdout || "").trim());
+console.log("[6/6] /audio 提取路: → mp3 ✓");
+
 // 清理
-try { unlinkSync(avi); unlinkSync(webm); unlinkSync(rmx); } catch { /* ignore */ }
-console.log("OK: test-transcode-args（双路源码契约 + 真跑:h264→copy+mp3 remux / mpeg4→vp8+opus webm + audio wav args）");
+try { unlinkSync(avi); unlinkSync(webm); unlinkSync(rmx); unlinkSync(mp3); } catch { /* ignore */ }
+console.log("OK: test-transcode-args（双路源码契约 + 真跑 remux/webm + wav args + /audio 提取 mp3）");
