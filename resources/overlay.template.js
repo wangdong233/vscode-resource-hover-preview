@@ -120,10 +120,23 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     // previewUrl：单一 URL 构造（审查 R-INT-04 散布收敛：原 fetcherFor/renderVideo/renderAudio 三处独立拼）
     function previewUrl(p, type) { return SERVER_BASE + "/preview?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN); }
     // 档3:非原生格式走 /transcode(ffmpeg 转码);原生走 /preview
+    // 0.5.27 🔴根因路由:VSCode 出厂 libffmpeg 无 AAC 解码器(本机二进制已验:仅 h264/flac/mp3/pcm/vorbis/vp8;
+    //   vscode#329811/#310736 同证)→ mp4/mov 系 AAC 音轨不可解 → Chromium HasAudio()=false → 原生 mute 按钮
+    //   disabled(死键)+ 无声。探测 AAC 不可解时,AAC 家族一律改走 /transcode(video→webm/vp8/opus,audio→wav,
+    //   全部落在 VSCode 实持有的解码器集合)。mediaCapabilities 探测;失败/超时前 fail-open(原生路径)。
+    var AAC_OK = true;  // 探测完成前 fail-open
+    try {
+        navigator.mediaCapabilities.decodingInfo({ type: "file", audio: { contentType: 'audio/mp4; codecs="mp4a.40.2"' } })
+            .then(function (r) { AAC_OK = !!r.supported; })
+            .catch(function () { /* fail-open 保持 true */ });
+    } catch (e) { /* 老环境无 mediaCapabilities:fail-open */ }
+    var AAC_FAMILY = ["mp4", "mov", "m4v", "m4a", "aac"];
     function mediaUrl(p, type) {
         var ext = (p.split(".").pop() || "").toLowerCase();
         var isNative = (type === "video" && NATIVE_VIDEO.indexOf(ext) >= 0) || (type === "audio" && NATIVE_AUDIO.indexOf(ext) >= 0);
-        return isNative ? previewUrl(p, type) : (SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN));
+        if (!isNative) return SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN);
+        if (!AAC_OK && AAC_FAMILY.indexOf(ext) >= 0) return SERVER_BASE + "/transcode?file=" + encodeURIComponent(p) + "&type=" + type + "&token=" + encodeURIComponent(TOKEN);  // AAC 家族:宿主解不了 → 转自由编解码
+        return previewUrl(p, type);
     }
     // fetcherFor：类型分派取数据 → {data, bytes}。
     // ★ 0.4.7 根因修：font/3d 直接存 arrayBuffer（不再造 blob URL）。原 blob round-trip（ab→Blob→blobUrl→fetch→ab）
@@ -177,6 +190,10 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     var ICON_RESET = "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5";  // rotate-ccw(恢复/重置)
     var ICON_CLOSE = "M18 6 6 18 M6 6l12 12";  // x
     var ICON_ZOOMRESET = "M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M16 21h3a2 2 0 0 0 2-2v-3M8 21H5a2 2 0 0 1-2-2v-3M7.5 12a4.5 4.5 0 1 0 4.5-4.5 4.88 4.88 0 0 0-3.37 1.37L7.5 10M7.5 7.5v2.5h2.5";  // 0.5.26 结合式(用户定案v2):最大化四角框(lucide maximize,复原到适配框)+框内 0.5 尺度 rotate-ccw 复原箭头(与 ICON_RESET 同语义)。四角框 3~21 全幅,内箭头圆 r4.5 中心(12,12)——两图形零交叠
+    var ICON_PLAY = "M7 5v14l12-7z";  // 0.5.27 lucide play(自研控件条)
+    var ICON_PAUSE = "M7 5h3v14H7zM14 5h3v14h-3z";  // lucide pause
+    var ICON_VOL = "M11 5 6 9H3v6h3l5 4V5z M15.5 8.5a5 5 0 0 1 0 7";  // lucide volume-2
+    var ICON_VOLX = "M11 5 6 9H3v6h3l5 4V5z M22 9l-6 6 M16 9l6 6";  // lucide volume-x
 
     // ===== popup 骨架（createElement，doc03）=====
     function ensurePopup() {
@@ -247,8 +264,21 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             ".mp-resize-sw{bottom:0;left:0;cursor:nesw-resize}",
             ".mp-resize-se{bottom:0;right:0;cursor:nwse-resize}",
             "#mp-popup.is-pinned{cursor:grab}",  // 0.5.13:pin 态背景显 grab(子元素 cursor 各自声明恒胜继承:按钮 pointer/handle nwse/fname text)
-            "#mp-popup.is-pinned .mp-content video,#mp-popup.is-pinned .mp-content audio{cursor:default}",  // video/audio 非控件区保留原生(controls 是 shadow DOM,CSS 不穿透)
+            "#mp-popup.is-pinned .mp-content video,#mp-popup.is-pinned .mp-content audio{cursor:default}",  // 视频/音频画面区非按钮处常规光标(交互面=mp-mb,0.5.27 起 controls 已弃)
             "#mp-popup.is-dragging,#mp-popup.is-dragging *{cursor:grabbing!important}",  // 拖动中统一锁定(模态捕获态,!important 唯一合法用)
+            // 0.5.27 自研媒体控件条(替代原生 UA controls:闭影 DOM 在 VSCode 环境交互死 + 自动化不可测)
+            ".mp-mb{position:absolute;left:10px;right:10px;bottom:8px;z-index:2;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:rgba(15,15,18,.62);backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3);box-shadow:0 2px 10px rgba(0,0,0,.4)}",  // 0.5.27b:内缩悬浮胶囊(白盒审计:四角把手 14×14 opacity:0 恒命中,贴边条会吃 play 键左缘——离边 10px 避让四角把手;仅角部 4×6px 残余重叠,handle z-3 恒胜,不挡 play 键本体)
+            ".mp-mb button{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.9);cursor:pointer;padding:0;border-radius:6px;transition:background-color 100ms ease-out,color 100ms ease-out}",
+            ".mp-mb button:hover{background:rgba(255,255,255,.14);color:#fff}",
+            ".mp-mb-time{flex:none;font:500 11px/1 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums;white-space:nowrap}",
+            ".mp-mb input[type=range]{-webkit-appearance:none;appearance:none;height:14px;background:transparent;cursor:pointer;border:none;padding:0}",
+            ".mp-mb input[type=range]:disabled{opacity:.3;cursor:default}",
+            ".mp-mb input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:rgba(255,255,255,.28)}",
+            ".mp-mb input[type=range]:hover::-webkit-slider-runnable-track{background:rgba(255,255,255,.45)}",
+            ".mp-mb input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#fff;margin-top:-3.5px}",
+            ".mp-mb .mp-mb-seek{flex:1;min-width:40px}",  // 进度条吃满中段;音量条定宽(inline style)
+            ".mp-mb.mp-mb-narrow .mp-mb-time{display:none}",  // 0.5.27d 🟡-4:窄窗(<300px)藏时间条
+            ".mp-mb.mp-mb-tiny .mp-mb-time,.mp-mb.mp-mb-tiny .mp-mb-vol{display:none}",  // <250px 再藏音量条(bar 定宽≈250>200-20 会溢出)
         ].join("\n");
         document.head.appendChild(style);
     }
@@ -275,7 +305,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         // 0.5.13: pin 态浮窗拖动(复用 resize 的 pointer+setPointerCapture+pointercancel+rAF 已验证范式)
         // DRAG_SKIP:拖动时让出的交互子元素。★ H-3 决策(0.5.14 方案 C):video/audio 整体让出(保留原生控件)+ 3D canvas 特判(下行 OrbitControls)
         //   → video/audio/3D pin 态【无可拖区】(媒体填满浮窗),仅 pin 锁定内容不随 hover 变;image/font 可拖。维持现状不追加 drag handle(产品决策,非 bug)。
-        var DRAG_SKIP = ".mp-resize,.mp-rail,.mp-fname,video,audio,button,input,a,[contenteditable]";
+        var DRAG_SKIP = ".mp-resize,.mp-rail,.mp-fname,.mp-mb,video,audio,button,input,a,[contenteditable]";  // 0.5.27:+.mp-mb(控件条背景让出按钮/滑条自有交互)
         var dragPointerId = null, onDragMove = null, onDragUp = null;
         var stopPan = function () { isPanning = false; popup.classList.remove("is-panning"); };  // 0.5.24🔴R1修:提升到 bindInteractions 作用域(原声明在 pointerdown 回调内,closeBtn 层引用即 ReferenceError——关闭按钮整体失效,0.5.23 自身回归;与 stopDrag 对称的 pan 强制清理)
         function stopDrag() {  // unpin/close 强制终止可能进行中的拖动(capture 路由下 click 可能不触发,须主动清)
@@ -456,7 +486,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         resetImageZoom(popup);  // 0.5.16:img 不重建,inline transform 残留;不清则"窗复位而图仍放大"状态分裂
         var content = popup.querySelector(".mp-content");
-        if (activeRendererType === "audio") { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; }
+        if (activeRendererType === "audio") { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "360px"; }  // 0.5.27d 🔵-5:与 renderAudio 对齐(原 320 不一致)
         else if (activeRendererType === "3d") { popup.style.width = "600px"; popup.style.height = "450px"; popup.style.minHeight = ""; }
         else {
             var img = content && content.querySelector("img"), vid = content && content.querySelector("video");
@@ -617,10 +647,52 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         });
     }
 
-    // v0.2 视频：直 HTTP src（浏览器原生 Range seek，非 blob；doc08 §1）
-    // 0.5.20 renderVideo settle-before-show(S1 根治):离屏建 video 等 metadata→定尺寸定位→一次性插 DOM→play。
-    //   不变式:video 可见后几何不再变——控制条从出现那刻起不动,消除"伸手点喇叭瞬间跳位"(视频声音开不了的竞态嫌疑 H2 主支)。
-    //   0.5.20 S4:▶ fallback(click=真实手势)补 video.muted=false——原只 play 不 unmute 是真 bug。
+    // ===== 0.5.27 自研媒体控件条(mp-mb)=====
+    // 根因链:原生 UA 控件=闭影 DOM——(a)用户实测 VSCode 环境中点击死(mute/play 无响应);(b)自动化不可测
+    // (CDP 合成输入驱动不了它,rig c1 裸 video 对照已证);(c)S1/样式/布局屡次与之缠斗。
+    // 属性写路径(play/pause/muted/volume/currentTime)rig 已证活跃 + 我们自有 DOM 按钮(rail 四键)在用户环境天天可用
+    // → 弃 controls,自建可测控件面。unmute 只发生在按钮/滑条手势内(autoplay 政策安全:手势内解静音是标准路径)。
+    function fmtT(s) { if (!isFinite(s) || s < 0) s = 0; s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (sec < 10 ? "0" : "") + sec; }  // 0.5.27d 🔵-5:≥1h 显示 1:15:00
+    function buildMediaBar(media) {
+        var bar = document.createElement("div"); bar.className = "mp-mb";
+        var play = document.createElement("button"); play.className = "mp-mb-play"; play.title = "播放/暂停";
+        var setPlayIcon = function () { play.replaceChildren(mkIcon(media.paused ? ICON_PLAY : ICON_PAUSE)); };
+        setPlayIcon();
+        play.addEventListener("click", function () { if (media.paused) { var p = media.play(); if (p && p.catch) p.catch(function () {}); } else media.pause(); });
+        var time = document.createElement("span"); time.className = "mp-mb-time"; time.textContent = "0:00 / 0:00";
+        var seek = document.createElement("input"); seek.type = "range"; seek.min = "0"; seek.max = "1000"; seek.step = "1"; seek.value = "0"; seek.className = "mp-mb-seek"; seek.title = "进度"; seek.disabled = true;
+        var mute = document.createElement("button"); mute.className = "mp-mb-mute"; mute.title = "静音";
+        var setMuteIcon = function () { mute.replaceChildren(mkIcon(media.muted || media.volume === 0 ? ICON_VOLX : ICON_VOL)); mute.title = media.muted ? "取消静音" : "静音"; };
+        setMuteIcon();
+        mute.addEventListener("click", function () { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuteIcon(); });  // 手势内解静音(Chromium:手势外程序解静音会被 autoplay 政策暂停)
+        var vol = document.createElement("input"); vol.type = "range"; vol.min = "0"; vol.max = "100"; vol.step = "1"; vol.value = String(Math.round((media.muted ? 0 : media.volume) * 100)); vol.title = "音量"; vol.className = "mp-mb-vol"; vol.style.width = "56px";
+        vol.addEventListener("input", function () { media.volume = parseInt(vol.value, 10) / 100; media.muted = media.volume === 0; setMuteIcon(); });
+        seek.addEventListener("input", function () { if (isFinite(media.duration) && media.duration > 0) media.currentTime = parseInt(seek.value, 10) / 1000 * media.duration; });
+        var sync = function () {
+            time.textContent = fmtT(media.currentTime) + " / " + fmtT(media.duration);
+            if (isFinite(media.duration) && media.duration > 0) {
+                seek.disabled = false;
+                if (document.activeElement !== seek) seek.value = String(Math.round(media.currentTime / media.duration * 1000));  // 0.5.27d 🟡-1:拖动中不被 timeupdate 覆写(与 vol 同守卫;原缺→拖进度与播放"打架")
+            } else seek.disabled = true;  // /transcode fMP4 空_moov 期 duration=Infinity → 禁拖待 durationchange 解锁
+            var popN = document.getElementById("mp-popup"), w = popN ? popN.offsetWidth : 400;  // 0.5.27d 🟡-4:窄窗自适应(bar 定宽≈250>min-width 200-20 → 溢出)。<300 藏 time,<250 再藏 vol
+            bar.classList.toggle("mp-mb-narrow", w < 300);
+            bar.classList.toggle("mp-mb-tiny", w < 250);
+        };
+        media.addEventListener("timeupdate", sync);
+        media.addEventListener("durationchange", sync);
+        media.addEventListener("play", setPlayIcon);
+        media.addEventListener("pause", setPlayIcon);
+        media.addEventListener("volumechange", function () { setMuteIcon(); if (document.activeElement !== vol) vol.value = String(Math.round((media.muted ? 0 : media.volume) * 100)); });
+        media.addEventListener("ended", setPlayIcon);
+        bar.append(play, time, seek, mute, vol);
+        sync();  // 0.5.27d 🔵-2:构造即同步一次(settle 时 metadata 已知,免"禁用态 seek+0:00"闪到首个 timeupdate)
+        return bar;
+    }
+
+    // v0.2 视频:直 HTTP src(浏览器原生 Range seek,非 blob;doc08 §1)。
+    // 0.5.20 settle-before-show(S1):离屏建 video 等 metadata→定尺寸定位→一次性插 DOM→play(可见后几何不变)。
+    // 0.5.27:controls=false + 自研 mp-mb 控件条(原生 UA 控件在 VSCode 环境交互死+不可测,见 buildMediaBar 注);
+    //   muted=true 起播(autoplay 政策恒过),用户点 mp-mb-mute 在手势内解静音——取代旧 S4 ▶fallback(被 play 按钮子集覆盖,删)。
     function renderVideo(filePath, ep, rect) {
         activeRendererType = "video";
         var popup = document.getElementById("mp-popup");
@@ -628,42 +700,44 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         var video = document.createElement("video");
         video.preload = "metadata";  // 离屏先取 metadata(本地/流式均早到)
         video.src = mediaUrl(filePath, "video");
-        video.controls = true; video.muted = true; video.playsInline = true;  // 删 autoplay 属性:显式 play() 单一路径(hover 无手势,muted play 恒成功,属性本就冗余)
+        video.muted = true; video.playsInline = true;  // 无 controls 属性/属性置 true 皆禁——控件面唯一来源=mp-mb(单一路径)
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
+        video.addEventListener("click", function () { if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); } else video.pause(); });  // 点击画面切播放(媒体播放器惯例;与 pan/drag 无冲突——video 在 DRAG_SKIP)
         var settled = false;
+        var nativeFallbackTried = false;  // 0.5.27d 🔴-1修(对抗审):AAC 路由把 mp4 系送 /transcode 后,无 ffmpeg 宿主 404 → 原生可播文件反成报错卡(0.5.26 同机是"有画无声"可用态)。回退原生一次
         var settle = function () {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
             if (settled || ep !== renderEpoch) return; settled = true;
             if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect);
             else if (rect) placePopup(rect);
-            content.replaceChildren(video);  // loading 占位此刻一次换掉,此后几何不再变(S1 不变式)
-            video.play().catch(function () {  // autoplay 被拒(罕见)→ ▶ 按钮;click=真实手势内 unmute+play(S4 修,原只 play 不开声)
-                if (ep !== renderEpoch) return;
-                var btn = document.createElement("button"); btn.textContent = "▶ 点击播放"; btn.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:24px;padding:12px;cursor:pointer;z-index:2";  // 0.5.21复审🟡-3修:绝对定位覆盖层(原 flex item 追加致 video 位移,自破 S1 可见后几何不变)
-                btn.addEventListener("click", function () { video.muted = false; video.play(); btn.remove(); });
-                content.appendChild(btn);
-            });
+            content.replaceChildren(video, buildMediaBar(video));  // loading 占位此刻一次换掉(video+bar 同刻插入,S1 不变式保持)
+            var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播;被拒也无需兜底(mp-mb play 按钮=手势路径,点它即播)
         };
         video.addEventListener("loadedmetadata", settle);
         setTimeout(settle, 600);  // 兜底:metadata 迟到也出画面(默认 400×300);迟到后不二次改尺寸(防跳)
         video.addEventListener("error", function () {
-            if (ep !== renderEpoch) return; settled = true;  // latch:错误后不再 settle
+            if (ep !== renderEpoch) return;
+            if (!nativeFallbackTried && video.src.indexOf("/transcode") >= 0) {  // 转码路死(无 ffmpeg/进程崩)且该文件原生可播 → 回退原生(画面保住;声音在无 AAC 宿主本就无解,原生/转码皆然)
+                var vext0 = (filePath.split(".").pop() || "").toLowerCase();
+                if (NATIVE_VIDEO.indexOf(vext0) >= 0) { nativeFallbackTried = true; video.src = previewUrl(filePath, "video"); var pf = video.play(); if (pf && pf.catch) pf.catch(function () {}); return; }
+            }
+            settled = true;  // latch:错误后不再 settle
             var vext = (filePath.split(".").pop() || "").toLowerCase();
             if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); return; }  // 非原生(avi/flv/mkv)失败 → 静默关(用户要求不做提醒)
             else showPopupError("video 加载失败");
         });
     }
 
-    // v0.3 音频：<audio> 直 HTTP src,controls 可见,不 autoplay 不静音(0.5.11:Chromium 策略下 hover 无法有声 autoplay,
-    //   模拟点击=isTrusted 硬墙不可绕;用户点 play=真实手势→有声可靠。删 autoplay/muted/取消静音按钮冗余代码)
+    // v0.3 音频:直 HTTP src。0.5.27:controls=false + mp-mb(与视频同组件;原生 UA 控件同族死按钮风险)。
+    //   不 autoplay 不静音——用户点 mp-mb-play(手势)即播,mp-mb-mute/vol 控音量。
     function renderAudio(filePath, ep, rect) {
         activeRendererType = "audio";
         var content = document.querySelector(".mp-content");
         var audio = document.createElement("audio");
         audio.src = mediaUrl(filePath, "audio");
-        audio.controls = true; audio.style.width = "100%";  // 默认非静音,不 autoplay——用户点 ▶ 即有声(可靠)
-        content.replaceChildren(audio);
-        var popup = document.getElementById("mp-popup");  // 音频无视觉内容 → popup 折叠成细横条
-        if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "320px"; if (rect) placePopup(rect); }
+        audio.style.display = "none";  // 无 controls 的 audio 无视觉;交互面全部走 mp-mb
+        content.replaceChildren(audio, buildMediaBar(audio));
+        var popup = document.getElementById("mp-popup");  // 音频无视觉内容 → popup 折叠成细横条(mp-mb 即全部内容)
+        if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "360px"; if (rect) placePopup(rect); }
         audio.addEventListener("error", function () { if (ep === renderEpoch) showPopupError("audio 加载失败"); });
     }
 

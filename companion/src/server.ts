@@ -208,6 +208,7 @@ function findFfmpeg(): Promise<string | null> {
 }
 
 // 档3 /transcode: ffmpeg 实时转码非 web 格式 → fMP4(video)/WAV(audio),流式 pipe(<video>/<audio> 直吃 chunked fMP4)
+let _ffprobeMissLogged = false;  // 0.5.27d 🟡-2:ffprobe 缺失降级只留痕一次
 async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.ServerResponse, roots: string[]) {
     let file = url.searchParams.get("file");
     const type = url.searchParams.get("type");
@@ -224,10 +225,26 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
     const ff = await findFfmpeg();  // 0.5.12🟡异步:不阻塞 EH
     if (!ff || res.writableEnded) { if (!res.writableEnded) { res.writeHead(404); res.end("no ffmpeg"); } return; }  // 无 ffmpeg→404(静默 hidePopup);或探测期间客户端已断开
     const isAudio = type === "audio";
-    // video→fMP4(libx264 ultrafast zerolatency + frag_keyframe+empty_moov 流式 pipe);audio→WAV(PCM 近零成本)。movflags 错token 根因见 test-transcode-args.mjs
+    // 0.5.27 🔴根因修正:video 输出禁 AAC(VSCode 出厂 libffmpeg 无 AAC——本机二进制已验:仅 h264/flac/mp3/pcm/vorbis/vp8
+    //   +Chromium 内建 libopus;vscode#329811/#310736 同证)→ fMP4+AAC 在 workbench 里视频可见而音轨死
+    //   (HasAudio()=false→原生 mute 置 disabled 死键+无声)。双路输出,全部落在 VSCode 实持有的解码器集合:
+    //   ① 源视频=h264(占绝对多数:mp4/mkv-h264/flv/mov-h264)→ 【零视频重编码】remux 成 fMP4 + MP3 音轨
+    //      (实测 39s 片 0.46s = 85× 实时;mp3-in-mp4 Chromium demux+decode 已 rig 实证)
+    //   ② 其余(avi-mpeg4/prores/hevc…)→ webm/VP8/Opus 重编码(scale=640 保 realtime)
+    //   音频支路 WAV(pcm_s16le)本就是自由编解码,不动。
+    let vcodec = "";
+    if (!isAudio) {
+        const ffprobe = ff.replace(/ffmpeg$/, "ffprobe");
+        try {
+            vcodec = await new Promise<string>((res2, rej2) => execFile(ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", realPath], { timeout: 4000 }, (e: Error | null, out?: string) => e ? rej2(e) : res2((out || "").trim().split("\n")[0] || "")));
+        } catch { vcodec = ""; if (!_ffprobeMissLogged) { _ffprobeMissLogged = true; console.error("[mp] ffprobe 不可用 — h264 remux 快路降级为 webm 重编码慢路(ffmpeg 同源 ffprobe 缺失;0.5.8 教训:静默降级必留痕)"); } }
+    }
+    const remux = vcodec === "h264";
     const args = isAudio
         ? ["-i", realPath, "-f", "wav", "-c:a", "pcm_s16le", "-"]
-        : ["-i", realPath, "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-c:a", "aac", "-"];
+        : remux
+            ? ["-i", realPath, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-"]
+            : ["-i", realPath, "-vf", "scale=640:-2", "-f", "webm", "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "5", "-b:v", "2M", "-c:a", "libopus", "-b:a", "96k", "-"];
     let ffmpeg;
     try { ffmpeg = spawn(ff, args, { stdio: ["ignore", "pipe", "pipe"] }); }
     catch { res.writeHead(500); res.end("spawn failed"); return; }
@@ -236,7 +253,7 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
     ffmpeg.stderr?.on("data", (d: Buffer) => { if (stderrBuf.length < 800) stderrBuf += d.toString(); });
     ffmpeg.on("error", () => { try { if (!headersSent) { headersSent = true; res.writeHead(500); res.end("ffmpeg error"); } else res.end(); } catch { /* ignore */ } });
     ffmpeg.on("close", (code: number) => { if (code !== 0) console.error(`[mp] ffmpeg exited ${code} (${path.basename(realPath)}): ${stderrBuf.slice(0, 400)}`); });
-    res.writeHead(200, { "Content-Type": isAudio ? "audio/wav" : "video/mp4", "Cache-Control": "no-store" });
+    res.writeHead(200, { "Content-Type": isAudio ? "audio/wav" : remux ? "video/mp4" : "video/webm", "Cache-Control": "no-store" });  // 0.5.27:双路 remux=mp4 / 重编码=webm
     headersSent = true;
     ffmpeg.stdout.pipe(res);
     req.on("close", () => { try { ffmpeg.kill("SIGKILL"); } catch { /* ignore */ } });

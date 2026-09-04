@@ -73,6 +73,8 @@ VSCode 更新会覆盖 patch，但 **companion 扩展会自动 re-patch**（你�
 | 🎲 3D | glb gltf obj stl fbx |
 
 > 💡 **视频格式**：mp4/webm/mov 等原生格式直接播放；AVI/FLV/MKV 等非原生格式需本机安装 [ffmpeg](https://ffmpeg.org/)（插件自动转码为浏览器可播格式，首次悬停有短暂转码延迟）。
+>
+> 🔊 **视频/音频自带播放控件条**（播放/进度/静音/音量，悬停弹窗底部胶囊）——不依赖 VSCode 原生媒体控件。若本机 VSCode 缺 AAC 解码器（官方构建默认如此，表现为视频有画无声），插件会自动检测并把 AAC 音轨转码为 MP3/Opus 播放，**有画面也有声音**（转码需本机 [ffmpeg](https://ffmpeg.org/)；无 ffmpeg 时自动回退原生播放——有画面）。
 
 ---
 

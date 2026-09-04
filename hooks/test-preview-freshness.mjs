@@ -32,8 +32,8 @@ const riBlock = overlaySrc.match(/function renderImage\(filePath, ep, rect\) \{[
 if (!riBlock || !/fetchImageFresh\(/.test(riBlock[0])) fail("renderImage 未走 fetchImageFresh");
 if (!/_prefetched/.test(overlaySrc) || !/PREFETCH_TTL/.test(overlaySrc)) fail("schedulePrefetch 缺 _prefetched 节流(image 无缓存键后防重复条件请求)");
 // 视频静音契约(用户铁则:预览绝不主动出声;默认静音;控件可人为开声/调音量)——0.5.20 更新:settle-before-show 删 autoplay 属性(显式 play),细契约见 test-overlay-media-contracts
-if (!/video\.controls = true; video\.muted = true;/.test(overlaySrc) || /video\.autoplay/.test(overlaySrc)) fail("renderVideo 须 controls+muted 且禁 autoplay 属性(0.5.20 settle-before-show 契约)");
-if (/video\.muted = false/.test(overlaySrc) === false) fail("▶ fallback 须含 video.muted = false(S4:手势内开声)");
+if (/\.controls = true/.test(overlaySrc) || /video\.autoplay/.test(overlaySrc)) fail("0.5.27:禁 controls=true(自研 mp-mb)+禁 autoplay 属性;renderVideo 须 muted=true 起播");  // 0.5.27 契约升级:原生 UA 控件弃用
+if (!/content\.replaceChildren\(video, buildMediaBar\(video\)\);/.test(overlaySrc)) fail("0.5.27:video 须与 mp-mb 控件条同刻插入(S4 ▶fallback 已删,由 mp-mb play 手势路径覆盖)");
 
 // ===== B. 真跑 server:304 协商 / 同名覆盖 / If-Range =====
 console.log("[2/3] 真跑 server(304/覆盖换新/同尺寸覆盖/If-Range)...");

@@ -15,14 +15,28 @@ const fail = (m) => { console.error("  FAIL:", m); fails++; };
 if (/NATIVE_VIDEO\s*=\s*\[[^\]]*"mkv"/.test(ov)) fail("NATIVE_VIDEO 含 mkv(Chromium 无 matroska demuxer→原生必死,应走 /transcode)");
 if (/var NATIVE_VIDEO = \["mp4", "webm", "mov", "m4v"\]/.test(ov) === false) fail("NATIVE_VIDEO 白名单非预期形态(改数组须同步本闸门)");
 
-// 2. renderVideo settle-before-show 契约
+// 2. renderVideo settle-before-show 契约 + 0.5.27 自研控件条契约
 if (/video\.autoplay/.test(ov)) fail("禁 video.autoplay 属性(0.5.20 显式 play() 单一路径;属性回流=S1 被拆)");
 const mutedCount = (ov.match(/video\.muted = true/g) || []).length;
-if (mutedCount !== 1) fail(`video.muted = true 应恰 1 处(renderVideo 三联),实得 ${mutedCount}(多处=有路径重复设静音)`);
-if (!/video\.muted = false;\s*video\.play\(\)/.test(ov)) fail("▶ fallback 须 muted=false 后 play(S4:真实手势内开声——原只 play 不 unmute 是声音开不了真 bug 之一)");
+if (mutedCount !== 1) fail(`video.muted = true 应恰 1 处(renderVideo muted 起播),实得 ${mutedCount}`);
+if (/\.controls = true/.test(ov)) fail("禁 media.controls = true(0.5.27:原生 UA 控件=闭影 DOM,VSCode 环境交互死+CDP 不可测——控件面唯一来源须为 mp-mb)");
 if (!/video\.preload = "metadata"/.test(ov)) fail("renderVideo 须 preload=metadata(离屏先取元数据)");
 if (!/var settled = false;/.test(ov) || !/settled = true;/.test(ov)) fail("settle latch 缺失(settle-before-show 单次入口契约)");
-if (!/content\.replaceChildren\(video\);  \/\/ loading 占位此刻一次换掉/.test(ov)) fail("video 须一次性插入(loadedmetadata 定尺寸后才 replaceChildren——可见后几何不变)");
+if (!/content\.replaceChildren\(video, buildMediaBar\(video\)\);/.test(ov)) fail("video+mp-mb 须同刻一次性插入(可见后几何不变,S1)");
+if (!/content\.replaceChildren\(audio, buildMediaBar\(audio\)\);/.test(ov)) fail("audio 须同款 mp-mb(同一组件双消费,原生控件同族死按钮风险)");
+if (/点击播放/.test(ov)) fail("S4 ▶fallback 须已删(0.5.27 被 mp-mb play 按钮手势路径覆盖,残留=双路径)");
+if (!/function buildMediaBar\(media\)/.test(ov)) fail("buildMediaBar 组件缺失");
+if (!/media\.muted = !media\.muted; if \(!media\.muted && media\.volume === 0\) media\.volume = 0\.5;/.test(ov)) fail("mute 按钮须手势内翻 muted(Chromium:手势外程序解静音会被 autoplay 政策暂停)");
+if (!/isFinite\(media\.duration\) && media\.duration > 0\) media\.currentTime/.test(ov)) fail("seek 须守 isFinite(duration)(/transcode fMP4 空_moov 期 duration=Infinity)");
+if (!/media\.addEventListener\("volumechange"/.test(ov) || !/media\.addEventListener\("timeupdate"/.test(ov)) fail("mp-mb 须监听 volumechange/timeupdate(控件态与媒体态双向同步)");
+
+// 2.5 0.5.27 🔴根因路由契约:VSCode 出厂 libffmpeg 无 AAC(二进制已验)→ AAC 轨 HasAudio()=false → 原生 mute 死键+无声
+if (!/var AAC_OK = true;/.test(ov) || !/navigator\.mediaCapabilities\.decodingInfo/.test(ov)) fail("须 mediaCapabilities 探测 AAC(fail-open 初始 true)");
+if (!/var AAC_FAMILY = \["mp4", "mov", "m4v", "m4a", "aac"\];/.test(ov) || !/!AAC_OK && AAC_FAMILY\.indexOf\(ext\) >= 0/.test(ov)) fail("AAC 家族须按探测结果改走 /transcode(mp4/mov/m4v/m4a/aac)");
+if (!/var nativeFallbackTried = false;/.test(ov) || !/video\.src\.indexOf\("\/transcode"\) >= 0/.test(ov)) fail("🔴-1:转码路死(无 ffmpeg 404)且原生可播时须回退 previewUrl 一次(0.5.27d 对抗审——否则无 ffmpeg 宿主 mp4 报错卡回归)");
+if (!/if \(document\.activeElement !== seek\) seek\.value/.test(ov)) fail("🟡-1:seek 须 activeElement 守卫(拖动中不被 timeupdate 覆写)");
+if (!/mp-mb-narrow/.test(ov) || !/mp-mb-tiny/.test(ov)) fail("🟡-4:窄窗自适应档位缺失(<300 藏 time,<250 藏 vol)");
+if (/\.controls = true/.test(ov)) fail("禁 controls=true(重复检查)");
 
 // 3. 缩放契约(0.5.22 增:上限 1000 实际无限 + pan + rail 复原按钮)
 if (!/ZOOM_MAX = 1000/.test(ov)) fail("ZOOM_MAX 须 1000(用户决策解除放大上限;千倍=浮点护栏)");

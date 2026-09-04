@@ -88,7 +88,7 @@ async function scenario() {
         localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
         document: mkDoc(),
         window: { innerWidth: 1920, innerHeight: 1080 },
-        navigator: {},
+        navigator: { mediaCapabilities: { decodingInfo: function () { return Promise.resolve({ supported: false }); } } },  // 0.5.27e:AAC 探测桩(不支持)→ mp4 路由 /transcode,供场景4 回退断言
     };
     sandbox.window.__MP_CONFIG__ = { port: 17741, token: "gate-token", version: "test", enabled: true };  // 缺此 IIFE 早退(降等保护)
     sandbox.window.MP_THREE = undefined;
@@ -108,6 +108,7 @@ async function scenario() {
         return row; };
     const rowPng = mkRow("test.png", "/tmp/x/test.png");
     const rowMp3 = mkRow("test.mp3", "/tmp/x/test.mp3");
+    const rowMp4 = mkRow("test.mp4", "/tmp/x/test.mp4");
 
     // 等 waitForExplorer 轮询到 root + listeners attached
     await new Promise(r => setTimeout(r, 500));
@@ -169,6 +170,39 @@ async function scenario() {
         }
     }
     console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
+
+    // --- 场景4(0.5.27 核心):自研 mp-mb 控件条行为——原生 UA 控件(闭影 DOM)被弃后,交互面全部落在此 ---
+    //    点 play → video.play 被调;点 mute → muted 翻 false(手势内解静音);seek input → currentTime 写入。
+    //    这正是用户实测死的交互(原生 mute 死按钮),从此有闸。
+    await hover(rowMp4);
+    await new Promise(r => setTimeout(r, 900));  // settle 600ms 兜底(settle 走 setTimeout 兜底路径)
+    const popup4 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    const vid4 = popup4 && popup4._qs(popup4, ".mp-content video");
+    if (!vid4) fail("场景4: video 未落(settle 未跑通)");
+    else {
+        if (vid4.controls) fail("video 不得带 controls(原生 UA 控件已弃;属性式/setAttribute 式皆抓)");
+        const bar = popup4._qs(popup4, ".mp-content .mp-mb");
+        if (!bar) fail("mp-mb 控件条未建(buildMediaBar 未跑)");
+        else {
+            const bPlay = bar._qs(bar, ".mp-mb-play"), bMute = bar._qs(bar, ".mp-mb-mute"), bSeek = bar._qs(bar, ".mp-mb-seek");
+            if (!bPlay || !bMute || !bSeek) fail("mp-mb 三要件缺(play/mute/seek)");
+            else {
+                bPlay.dispatch("click", {});  // 初始:renderVideo settle 已 play(paused=false)→ 此点击=暂停
+                if (!vid4._calls.includes("pause")) fail("mp-mb play 点击未驱动媒体(点按→pause 未调)");
+                bPlay.dispatch("click", {});  // 再点=播放
+                if (!vid4._calls.includes("play")) fail("mp-mb play 点击未驱动媒体(再点→play 未调)");
+                bMute.dispatch("click", {});  // muted=true → false(手势内解静音,用户核心诉求)
+                if (vid4.muted !== false) fail("mp-mb mute 点击未解静音(muted 应翻 false)——用户实测死按钮的替代路径失效");
+                vid4.duration = 100; bSeek.value = "250"; bSeek.dispatch("input", {});  // duration 由媒体栈供;stub 手设后 seek
+                if (vid4.currentTime !== 25) fail("mp-mb seek 未写入 currentTime(实得 " + vid4.currentTime + ")");
+                if (!String(vid4.src).includes("/transcode")) fail("场景4: AAC 桩不支持时 mp4 须路由 /transcode(实得 " + vid4.src + ")");
+                vid4.dispatch("error", {});  // 0.5.27e 🔴-1 行为断言:转码路死(无 ffmpeg 404)→ 回退原生一次
+                if (!String(vid4.src).includes("/preview")) fail("🔴-1 回退失效:转码 error 后 src 未回退 /preview(无 ffmpeg 宿主 mp4 将报错卡——0.5.27d 对抗审)");
+                if (!vid4._calls.includes("play")) fail("回退后须重试 play");
+            }
+        }
+    }
+    console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }
 
 await scenario();
