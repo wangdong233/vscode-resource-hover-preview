@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.28.16"; // bump:0.5.24 全项目双审 BLOCK 修复——R1 stopPan 作用域(关闭钮失效)/R2 媒体摘除 pause+断src/Y1 URL try/Y2 isFile+stream error/Y8 reset 复夹紧/Y9 3D 入口置 type/Y13 drag 重入门/B4 spawnPatcher 三件套 + 第8闸门 renderer 执行 harness
+export const INJECT_VERSION = "v0.28.17"; // bump:0.5.25 复位体验三修——捏合 K 0.0015→0.01+步长封顶 0.336/复原图标结合式(镜片内四角框)/🔴点复原浮窗误关(rail 在光标下缩走→mouseleave 误发)几何宽限复检制 650ms
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;

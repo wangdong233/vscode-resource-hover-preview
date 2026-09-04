@@ -138,7 +138,28 @@ async function scenario() {
     await hover(rowPng);
     if (!aud._calls.includes("pause")) fail("audio→image 切换未 pause(disposeContent R2 分支未生效:脱离 DOM 媒体继续出声)");
     if (!aud._calls.includes("removeAttribute:src")) fail("audio 未断 src(转码流继续拉取)");
-    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次");
+
+    // --- 场景3(0.5.25🔴锚):wheel 放大→点复原按钮→mouseleave 不误关(宽限)→到期复检干净关闭 ---
+    //    真机根因:点击后 gap2+按钮在光标下隐藏→rail 缩走→Chromium 补发 mouseleave→200ms 误关(用户实测"点复原=浮窗消失")
+    const popup3 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    const img3 = popup3 && popup3._qs(popup3, ".mp-content img");
+    if (!img3) fail("场景3: img 缺失(前置场景未留 image 渲染)");
+    else {
+        popup3.dispatch("wheel", { deltaY: -120, deltaMode: 0, ctrlKey: false, clientX: 200, clientY: 200, target: img3, preventDefault() {} });
+        if (!(img3._mpZoom && img3._mpZoom.s > 1)) fail("wheel 缩放未生效(_mpZoom.s>1 缺失)");
+        const zb = popup3._qsa(popup3, "button").find(b => b.className.includes("mp-zoomreset"));
+        if (!zb) fail("zoomreset 按钮未建");
+        else {
+            if (zb.style.display !== "flex") fail("zoomBtn 须随 s>1 显示(display=flex),实得 " + zb.style.display);
+            zb.dispatch("click", { stopPropagation() {} });   // 点复原(真机此刻 rail 在光标下缩走)
+            popup3.dispatch("mouseleave", {});                // 模拟 Chromium 对"元素自光标下移走"补发的 mouseleave
+            await new Promise(r => setTimeout(r, 350));       // > hideDelay(200) 但 < 宽限(650):不得关
+            if (popup3.style.display === "none") fail("grace 失效:点复原按钮后被 mouseleave 误关(0.5.25 用户实测🔴回归)");
+            await new Promise(r => setTimeout(r, 600));       // 过宽限到期(650):stub 下 :hover 恒 false → 复检须关
+            if (popup3.style.display !== "none") fail("宽限到期未复检关闭(死悬窗:无 :hover 时须 hidePopup)");
+        }
+    }
+    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限不误关+到期关闭 ✓");
 }
 
 await scenario();

@@ -16,7 +16,8 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     var isDragging = false;  // 0.5.13: pin 态浮窗拖动中标志(root mousemove 早退防 currentHovered 漂移 + pinBtn unpin 强制终止用)
     var isPanning = false;   // 0.5.22: 缩放图平移中标志(三处 hideTimer fire-time 守卫防 pan 中弹窗被销毁 + root mousemove/wheel 让出)
     var zoomBtnEl = null;    // 0.5.22: rail 缩放复原按钮(仅 s>1 显示)
-    var ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.0015, ZOOM_DY_MAX = 200;  // 0.5.22:ZOOM_MAX 8→1000(用户决策解除放大上限;千倍=浮点安全护栏,约 35 格到顶,实际无限制)。滚轮一格×1.30;捏合独立 0.0015;单事件 dy 封顶±200
+    var zoomGeomGrace = 0;   // 0.5.25:复原按钮点击的几何宽限截止时间戳——见 armZoomGeomGrace
+    var ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.01, ZOOM_STEP_PINCH = 0.336, ZOOM_DY_MAX = 200;  // 0.5.22:ZOOM_MAX 8→1000(用户决策解除放大上限;千倍=浮点安全护栏,约 35 格到顶,实际无限制)。滚轮一格×1.30;0.5.25:PINCH 0.0015→0.01(用户实测捏合不跟手——mac 捏合合成 wheel 事件 dy 极小(±1~8/次)高频,低增益=迟滞;Excalidraw 同手势 /100=0.01 同量级)+STEP_PINCH 封顶 0.336(=ln1.4≈1.4×/event,防真鼠标 ctrl+滚轮一格 dy~120 跳 2.7×;触控板 dy 小恒不触顶=全增益);单事件 dy 封顶±200
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var lastRenderedPath = null;  // 0.5.4: 已渲染项路径（startRename 取此,不取 currentHovered——后者可能因 hoverTimer 延迟与显示不同步）
@@ -173,7 +174,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     var ICON_PIN = "M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z";  // thumbtack(.is-pinned 时 CSS 填充头部)
     var ICON_RESET = "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5";  // rotate-ccw(恢复/重置)
     var ICON_CLOSE = "M18 6 6 18 M6 6l12 12";  // x
-    var ICON_ZOOMRESET = "M11 3a8 8 0 1 0 0 16a8 8 0 1 0 0-16 M21 21l-4.3-4.3";  // 0.5.22 放大镜(缩放复原,区别于尺寸复原的圆箭头)
+    var ICON_ZOOMRESET = "M11 3a8 8 0 1 0 0 16a8 8 0 1 0 0-16 M21 21l-4.3-4.3 M7.5 10V7.5H10 M12 7.5h2.5V10 M14.5 12v2.5H12 M10 14.5H7.5V12";  // 0.5.25 结合式(用户定案):放大镜(缩放语境)+镜片内四角框(scan-corners,复原到适配框语义)——原裸放大镜与"复原"错位。四角框 7.5~14.5 占位≈lucide zoom-in 的 + 号,16px 渲染可辨
 
     // ===== popup 骨架（createElement，doc03）=====
     function ensurePopup() {
@@ -193,7 +194,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         // 0.5.22:缩放复原按钮(仅 s>1 显示;独立分组,与原三键以更宽 gap 隔开——用户指定"间隔要和原来的三个远离一些")
         var gap2 = document.createElement("div"); gap2.className = "mp-gap2";
         var zoomBtn = document.createElement("button"); zoomBtn.className = "mp-zoomreset"; zoomBtn.title = "复原缩放(回到 100%)"; zoomBtn.style.display = "none"; zoomBtn.appendChild(mkIcon(ICON_ZOOMRESET));
-        zoomBtn.addEventListener("click", function (e) { e.stopPropagation(); resetImageZoom(popup); });
+        zoomBtn.addEventListener("click", function (e) { e.stopPropagation(); armZoomGeomGrace(); resetImageZoom(popup); });  // 0.5.25:+几何宽限(本按钮+gap2 在光标下隐藏→rail 缩走→mouseleave 误关,见 armZoomGeomGrace)
         rail.append(gap2, zoomBtn);
         zoomBtnEl = zoomBtn;
         var content = document.createElement("div"); content.className = "mp-content";
@@ -371,9 +372,11 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             e.preventDefault();                                            // 挡页面滚动 + Chromium ctrl+wheel/pinch 整窗缩放默认动作
             var dy = e.deltaY; if (e.deltaMode === 1) dy *= 33;            // 规范合规性归一 line→pixel(宿主 mac Chromium 恒 pixel,不可达;留作跨环境正确性)
             if (dy > ZOOM_DY_MAX) dy = ZOOM_DY_MAX; else if (dy < -ZOOM_DY_MAX) dy = -ZOOM_DY_MAX;  // 0.5.20:单事件封顶(惯性大 delta/line-mode 无上限跳变)
-            var zoomK = e.ctrlKey ? ZOOM_K_PINCH : ZOOM_K;        // 0.5.20:捏合(ctrlKey)独立 K 保精细(与滚轮共 K 会被动 +47% 伤调焦)
+            var zoomK = e.ctrlKey ? ZOOM_K_PINCH : ZOOM_K;        // 0.5.20:捏合(ctrlKey)独立 K;0.5.25:0.0015→0.01(用户实测捏合不跟手而滚轮已完美——mac 捏合合成 wheel 事件 dy 极小(±1~8/次),0.0015 下全手势仅 ~1.2×;Excalidraw 同手势 /100=0.01 量级)
+            var step = -dy * zoomK;
+            if (e.ctrlKey && step > ZOOM_STEP_PINCH) step = ZOOM_STEP_PINCH; else if (e.ctrlKey && step < -ZOOM_STEP_PINCH) step = -ZOOM_STEP_PINCH;  // 0.5.25:捏合支路单事件步长封顶(K 升 0.01 后真鼠标 ctrl+滚轮一格 dy~120 会跳 2.7×;封 ln1.4≈1.4×/event。触控板捏合 dy 小恒不触顶=全增益,顺滑不受影响)
             var z = img._mpZoom || { s: 1, tx: 0, ty: 0 };
-            var sNext = Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-dy * zoomK)));  // clamp [1,ZOOM_MAX];下界触底→下行复位(非 no-op)
+            var sNext = Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(step)));  // clamp [1,ZOOM_MAX];下界触底→下行复位(非 no-op)
             if (sNext === z.s) return;
             if (sNext === 1) { resetImageZoom(popup); return; }  // 0.5.16复审🟡-1修:触底态≡干净态——不复位则 tx 残留→s=1 图却偏移被 overflow:hidden 裁掉,且此后 sNext===z.s 永久 no-op(无 pan 无法自愈)
             var cr = content.getBoundingClientRect();                      // content 永不被 transform,视觉盒==layout 盒
@@ -399,14 +402,14 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             pinBtn.classList.toggle("is-pinned", isPinned);
             popup.classList.toggle("is-pinned", isPinned);  // 0.5.13复审 H-4 纠注:同步根仅影响 #mp-popup.is-pinned{cursor:grab} 选择器(原 latent bug=grab 光标不显);拖动门控读 isPinned 模块 var 不依赖此 class
         });
-        resetBtn.addEventListener("click", function (e) { e.stopPropagation(); try { localStorage.removeItem("mp.popupSize." + (activeRendererType || "default")); } catch (e2) {} resetToDefaultSize(); });  // 0.5.11:清保存尺寸 + 按内容 natural 恢复(原固定 400×300 不匹配图比例→上下留白)
+        resetBtn.addEventListener("click", function (e) { e.stopPropagation(); armZoomGeomGrace(); try { localStorage.removeItem("mp.popupSize." + (activeRendererType || "default")); } catch (e2) {} resetToDefaultSize(); });  // 0.5.11:清保存尺寸 + 按内容 natural 恢复(原固定 400×300 不匹配图比例→上下留白);0.5.25:+几何宽限(窗被手动放大过时,回 natural 使 rail 随右缘左移出光标→同族误关)
         closeBtn.addEventListener("click", function (e) { e.stopPropagation(); if (activeRenameDone) activeRenameDone(false); stopDrag(); stopPan(); isPinned = false; pinBtn.classList.remove("is-pinned"); popup.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 0.5.13复审 H-2:走 stopDrag() 单一清理点(R-INT-07,原手动逐字段清是唯一例外,未来加 Esc/auto-hide 路径会放大);🔵 改名中途关闭先 done(false) 取消
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
         popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); if (hoverTimer) clearTimeout(hoverTimer); });  // 0.5.12🟡修:进 popup 也清 hoverTimer(否则 300ms 内首次 hover 的 hoverTimer 仍触发 handleHover 重渲染,刷掉用户正要点的按钮)
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
             if (!isPinned) {
                 if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function () { if (!isPinned && !isPanning) { hidePopup(); currentHovered = null; } }, hideDelayMs());  // 0.5.22:+!isPanning(pan 中指针已离 popup,防 400ms 后销毁拖拽中的图)
+                hideTimer = setTimeout(function () { if (!isPinned && !isPanning && Date.now() >= zoomGeomGrace) { hidePopup(); currentHovered = null; } }, hideDelayMs());  // 0.5.22:+!isPanning(pan 中指针已离 popup,防 400ms 后销毁拖拽中的图);0.5.25:+几何宽限让位(点复原按钮 rail 缩走误发的 mouseleave)
             }
         });
     }
@@ -504,7 +507,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
                 // 鼠标离开文件项区域 → 计划隐藏
                 if (currentHovered && !isPinned) {
                     if (hideTimer) clearTimeout(hideTimer);
-                    hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning
+                    hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位(rail-left 变体下光标可悬 explorer 区,此路径也可达)
                 }
                 return;
             }
@@ -520,11 +523,25 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             if (currentHovered && !isPinned) {
                 if (hoverTimer) clearTimeout(hoverTimer);
                 if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning
+                hideTimer = setTimeout(function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) hidePopup(); currentHovered = null; }, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位(同上,root mouseleave 兜底路径)
             }
         });
     }
     function isMouseInPopup() { var p = document.getElementById("mp-popup"); return p && p.matches(":hover"); }
+    // 0.5.25 复位几何宽限:🔴点复原按钮=浮窗瞬间消失(用户实测)。根因≠窗缩——是 rail 在光标下缩走:
+    //   点击 zoomBtn → gap2(12px)+按钮(28px)同时隐藏 → rail 自底缩 ~40px → 光标正落在原按钮位=rail 新盒之外
+    //   → Chromium 对"元素自光标下移走"补发 popup mouseleave → 200ms 后误关。resetBtn(尺寸复原)在窗被手动
+    //   放大过时同族(窗回 natural,rail 随右缘左移出光标)。
+    //   宽限=复检制(用户语义"默认认为复原按钮原位置还有东西,虽然看不见"):窗口期内三处 hideTimer fire-time
+    //   让位;到期复检真实 :hover(popup 或源文件行)——命中任一则留,皆非则关。既不误关,也不留死悬窗。
+    function armZoomGeomGrace() {
+        zoomGeomGrace = Date.now() + 650;
+        setTimeout(function () {
+            if (Date.now() < zoomGeomGrace) return;  // 宽限期内被再次 arm 顺延,本轮回让(多 timer 自收敛,免句柄簿记)
+            zoomGeomGrace = 0;
+            if (!isMouseInPopup() && !isPinned && !isPanning && !(currentHovered && currentHovered.matches(":hover"))) { hidePopup(); currentHovered = null; }
+        }, 660);
+    }
 
     // ===== 文件名/路径（doc06 方案0：.monaco-icon-label aria-label = 完整路径）=====
     function getLabelName(rowEl) {

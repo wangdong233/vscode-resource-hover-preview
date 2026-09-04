@@ -37,8 +37,16 @@ if (!/zoomBtnEl\.style\.display = z\.s > 1 \? "flex" : "none"/.test(ov)) fail("�
 if (!/ICON_ZOOMRESET/.test(ov)) fail("ICON_ZOOMRESET 缺失");
 if (!/img-zoomed \.mp-content img\{cursor:grab\}/.test(ov)) fail("img-zoomed grab 光标 affordance CSS 缺失");
 if (!/ZOOM_K = 0\.0022/.test(ov)) fail("ZOOM_K 须 0.0022(滚轮×1.30/格,用户定案灵敏度;改值须过终裁级论证)");
-if (!/ZOOM_K_PINCH = 0\.0015/.test(ov) || !/e\.ctrlKey \? ZOOM_K_PINCH : ZOOM_K/.test(ov)) fail("捏合须独立 K=0.0015(ctrlKey 分流)——与滚轮共 K 伤精细调焦");
+if (!/ZOOM_K_PINCH = 0\.01/.test(ov) || !/e\.ctrlKey \? ZOOM_K_PINCH : ZOOM_K/.test(ov)) fail("捏合须独立 K=0.01(0.5.25 用户实测 0.0015 不跟手;Excalidraw /100 同量级)+ctrlKey 分流");
+if (!/ZOOM_STEP_PINCH = 0\.336/.test(ov) || !/e\.ctrlKey && step > ZOOM_STEP_PINCH/.test(ov)) fail("捏合支路单事件步长须封顶 0.336(ln1.4;K=0.01 后真鼠标 ctrl+滚轮一格防 2.7× 跳变,触控板小 dy 不触顶)");
 if (!/ZOOM_DY_MAX = 200/.test(ov) || !/dy > ZOOM_DY_MAX/.test(ov)) fail("单事件 dy 须封顶 ±200(触控板惯性/line-mode 防一瞬顶格)");
+
+// 3.5 复位几何宽限契约(0.5.25,用户实测🔴:点复原按钮→rail 在光标下缩走→mouseleave 误发→浮窗瞬间消失)
+const graceGuards = (ov.match(/Date\.now\(\) >= zoomGeomGrace/g) || []).length;
+if (graceGuards < 3) fail(`三处 hideTimer fire-time 须让位几何宽限(点复原 rail 缩走误关),实得 ${graceGuards}`);
+const graceArms = (ov.match(/armZoomGeomGrace\(\)/g) || []).length;
+if (!/function armZoomGeomGrace\(\)/.test(ov) || graceArms < 3) fail(`armZoomGeomGrace 须定义+两调用点(zoomBtn/resetBtn 点击),实得 ${graceArms}`);
+if (!/zoomGeomGrace = Date\.now\(\) \+ 650/.test(ov) || !/!isMouseInPopup\(\) && !isPinned && !isPanning && !\(currentHovered && currentHovered\.matches\(":hover"\)\)/.test(ov)) fail("宽限到期须复检真实 :hover(popup 或源行)再定去留(防误关也防死悬窗)");
 
 if (!/function disposeContent\(\) \{[\s\S]{0,420}resetImageZoom\(dPop\)/.test(ov)) fail("disposeContent 须调 resetImageZoom(🔴-1:图→图直切/hidePopup 拆除路径重置 img-zoomed 类+复原按钮,防假按钮假光标)");
 // 4. 媒体隐藏延时 + 几何清理
