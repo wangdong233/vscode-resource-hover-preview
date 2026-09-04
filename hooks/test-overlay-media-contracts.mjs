@@ -69,6 +69,10 @@ if (!/function armHideChain\(\)/.test(ov) || (ov.match(/armHideChain\(\)/g) || [
 const graceArms = (ov.match(/armZoomGeomGrace\(\)/g) || []).length;
 if (!/function armZoomGeomGrace\(\)/.test(ov) || graceArms < 3) fail(`armZoomGeomGrace 须定义+两调用点(zoomBtn/resetBtn 点击),实得 ${graceArms}`);
 if (!/zoomGeomGrace = Date\.now\(\) \+ 650/.test(ov) || !/!isMouseInPopup\(\) && !isPinned && !isPanning && !\(currentHovered && currentHovered\.matches\(":hover"\)\)/.test(ov)) fail("宽限到期(动过)须复检真实 :hover(popup 或源行)再定去留(防误关也防死悬窗)");
+if (!/mp-mb-noaudio/.test(ov) || !/markNoAudio/.test(ov)) fail("0.5.32:无音轨源须藏 mute/volume(对 AAC 家族无实效免误导——.work_v.mp4 用户实测困惑)");
+if (!(ov.indexOf("content.replaceChildren.apply(content, kids);") < ov.indexOf("if (twin && twin._mpDead) markNoAudio();"))) fail("0.5.32b 终验V2:settle 补查必须在 bar 入 DOM 之后(原在插入前=querySelector 恒空死代码)");
+if (!(ov.indexOf('if (ep !== renderEpoch) return;  // 0.5.32b 终验 V4') < ov.indexOf("markNoAudio();  // 0.5.32:提取失败"))) fail("0.5.32b 终验V4:twin error 的 markNoAudio 须在 epoch 守卫内(陈旧 twin 迟到 error 误标当前 bar)");
+if (!/var activeTwin = null;/.test(ov) || !/activeTwin = twin;/.test(ov)) fail("0.5.32b 终验:离屏 twin 模块引用缺失(hidePopup 早于 settle 时 /audio 孤儿拉取)");
 if (!/zoomGeomHold = true; return;/.test(ov)) fail("宽限到期鼠标未动须进入 hold 停驻保持(0.5.26 用户语义:点复原停在原地=不关),而非直接关");
 if (!/if \(!zoomGeomHold\) return;/.test(ov) || !/lastMX = e\.clientX; lastMY = e\.clientY;/.test(ov)) fail("须有 document mousemove 跟踪器(全局坐标记录+hold 首帧移动裁决——死区内无既有监听可达,必须 document 级)");
 

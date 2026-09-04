@@ -39,6 +39,7 @@
     // v0.2-v0.5审查🟡：disposeActiveRenderer 按 type 路由（防 font/pdf/3d 资源累积）
     var activeRendererType = null;
     var activeFontFace = null;
+    var activeTwin = null;  // 0.5.32b 终验:离屏(未 settle)twin 的模块引用——hidePopup 于 settle 前发生时 DOM 查询不可达,须由此切断 /audio 拉取
     // activePdf 移除（0.4.5：PDF 预览删除，用户判定无必要）
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
@@ -309,6 +310,7 @@
             ".mp-mb input[type=range]:hover::-webkit-slider-runnable-track{background:rgba(255,255,255,.45)}",
             ".mp-mb input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:#fff;margin-top:-3.5px}",
             ".mp-mb .mp-mb-seek{flex:1;min-width:40px}",  // 进度条吃满中段;音量条定宽(inline style)
+            ".mp-mb.mp-mb-noaudio .mp-mb-mute,.mp-mb.mp-mb-noaudio .mp-mb-vol{display:none}",  // 0.5.32:无音轨源藏音频控件(无实效免误导)
             ".mp-mb.mp-mb-narrow .mp-mb-time{display:none}",  // 0.5.27d 🟡-4:窄窗(<300px)藏时间条
             ".mp-mb.mp-mb-tiny .mp-mb-time,.mp-mb.mp-mb-tiny .mp-mb-vol{display:none}",  // <250px 再藏音量条(bar 定宽≈250>200-20 会溢出)
         ].join("\n");
@@ -549,6 +551,7 @@
         if (activeRendererType === "3d" && typeof dispose3D === "function") dispose3D();
         else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
         else if (activeRendererType === "video" || activeRendererType === "audio") {  // 0.5.24🔴R2修+0.5.29:全部媒体元素(视频+旁路 twin+音频条)逐一 pause+断 src+load(twin 入 DOM,单一清理路径)
+            if (activeTwin) { try { activeTwin.pause(); activeTwin.removeAttribute("src"); activeTwin.load(); } catch (eT) {} activeTwin = null; }  // 0.5.32b 终验:settle 前被切走的离屏 twin(DOM 查询不可达)由模块引用切断,防 /audio 孤儿拉取;入 DOM 后同 cut 幂等
             var dMeds = document.querySelectorAll("#mp-popup .mp-content video, #mp-popup .mp-content audio");
             for (var di = 0; di < dMeds.length; di++) { try { var p = dMeds[di].pause(); if (p && p.catch) p.catch(function () {}); dMeds[di].removeAttribute("src"); dMeds[di].load(); } catch (e) { /* ignore */ } }
         }
@@ -607,16 +610,27 @@
     // 0.5.29 走廊守卫:指针在 popup 与源文件行之间的缓冲走廊(各向外扩 24px 的包围盒)→ 不关浮窗,250ms 后再查。
     // 根因:hideTimer 400ms 窗口只覆盖"快速移动",慢速移向底部控件条时窗口击穿 → hide→re-hover→重渲染 = 用户实测的闪烁抖动。
     // 指针停走廊=意图不明,保活是安全默认(回到行/popup 即恢复常规语义)。
+    // 0.5.32 🔴修(用户实测回归,rig6 复现+0.5.30 对照二分定案):原走廊=两矩形【外接包络】——行(0..300,0..22)+popup
+    // (312..712,34..334) 的包络 760×382 巨舱罩进行下方/popup 左侧大片无关空白,指针停舱内→250ms 链无限重挂→移出不关。
+    // 根治=三区并集,数学上只覆盖真实通过区:①popup±24 ②源行±24 ③两矩形【间隙连接带】(仅当该轴分离;带宽=24,沿
+    // 正交轴取两矩形重叠区±24)。指针(150,320) 对该几何在舱外→关;通过点(310,28) 在连接带内→保活。
     function inTransitCorridor() {
         if (lastMX < 0) return false;
         var p = document.getElementById("mp-popup");
         if (!p || p.style.display === "none") return false;
-        var r = p.getBoundingClientRect();
-        var l = r.left - 24, t = r.top - 24, rr = r.right + 24, b = r.bottom + 24;
-        if (currentHovered && currentHovered.getBoundingClientRect) {
-            try { var c = currentHovered.getBoundingClientRect(); l = Math.min(l, c.left - 24); t = Math.min(t, c.top - 24); rr = Math.max(rr, c.right + 24); b = Math.max(b, c.bottom + 24); } catch (e) {}
-        }
-        return lastMX >= l && lastMX <= rr && lastMY >= t && lastMY <= b;
+        var r = p.getBoundingClientRect(), E = 24;
+        var c = null;
+        if (currentHovered && currentHovered.getBoundingClientRect) { try { c = currentHovered.getBoundingClientRect(); } catch (e2) {} }
+        var inBand = function (q) { return q && lastMX >= q.left - E && lastMX <= q.right + E && lastMY >= q.top - E && lastMY <= q.bottom + E; };
+        if (inBand(r) || inBand(c)) return true;
+        if (!c) return false;
+        var xGap = r.right < c.left ? [r.right - E, c.left + E] : (c.right < r.left ? [c.right - E, r.left + E] : null);
+        var yOv = [Math.max(r.top, c.top) - E, Math.min(r.bottom, c.bottom) + E];
+        if (xGap && yOv[0] <= yOv[1] && lastMX >= xGap[0] && lastMX <= xGap[1] && lastMY >= yOv[0] && lastMY <= yOv[1]) return true;
+        var yGap = r.bottom < c.top ? [r.bottom - E, c.top + E] : (c.bottom < r.top ? [c.bottom - E, r.top + E] : null);
+        var xOv = [Math.max(r.left, c.left) - E, Math.min(r.right, c.right) + E];
+        if (yGap && xOv[0] <= xOv[1] && lastMY >= yGap[0] && lastMY <= yGap[1] && lastMX >= xOv[0] && lastMX <= xOv[1]) return true;
+        return false;
     }
     // 0.5.25 复位几何宽限:🔴点复原按钮=浮窗瞬间消失(用户实测)。根因≠窗缩——是 rail 在光标下缩走:
     //   点击 zoomBtn → gap2(12px)+按钮(28px)同时隐藏 → rail 自底缩 ~40px → 光标正落在原按钮位=rail 新盒之外
@@ -767,8 +781,11 @@
         if (TWIN_NEEDED.indexOf(ext) >= 0) {
             twin = document.createElement("audio");
             twin.preload = "auto"; twin.muted = true; twin.style.display = "none";
+            activeTwin = twin;  // 0.5.32b:登记(settle 前被切走时 dispose 由引用兜底)
             twin.src = audioUrl(filePath);
             twin.addEventListener("error", function () {
+                if (ep !== renderEpoch) return;  // 0.5.32b 终验 V4:陈旧 twin 迟到 error 不得触碰当前渲染的 bar(移到 markNoAudio 之前)
+                markNoAudio();  // 0.5.32:提取失败/无音轨即刻标注(时序:bar 若已建即打标;未建由 settle 补查)
                 if (ep !== renderEpoch) return;
                 twin._mpDead = true;  // mixer 即刻降级(mute/volume 落回 master);不 retry(无 ffmpeg/无音轨皆终局)
                 try { twin.removeAttribute("src"); twin.load(); } catch (e2) {}
@@ -776,6 +793,7 @@
             });
         }
         var mixer = makeMixer(video, twin);  // twin=null(webm/非原生)时 mixer 退化为单元素直通
+        var markNoAudio = function () { var barEl = document.querySelector("#mp-popup .mp-mb"); if (barEl) barEl.classList.add("mp-mb-noaudio"); };  // 0.5.32:无音轨源(如 .work_v.mp4)mute/volume 无实效,隐藏免误导(用户实测困惑)
         var settled = false;
         var settle = function () {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
             if (settled || ep !== renderEpoch) return; settled = true;
@@ -783,6 +801,7 @@
             else if (rect) placePopup(rect);
             var kids = [video]; if (twin) kids.push(twin); kids.push(buildMediaBar(mixer));
             content.replaceChildren.apply(content, kids);  // loading 占位此刻一次换掉(video+twin+bar 同刻插入,S1;twin display:none 入 DOM——dispose 单一 DOM 清理路径覆盖)
+            if (twin && twin._mpDead) markNoAudio();  // 0.5.32b 终验 V2:补查必须在 bar 入 DOM 之后(原在插入前=querySelector 恒空死代码)
             var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播(策略恒过);mixer.timeupdate 会拉起 twin 对齐加入
         };
         video.addEventListener("loadedmetadata", settle);

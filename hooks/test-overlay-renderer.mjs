@@ -222,7 +222,6 @@ async function scenario() {
         await new Promise(r => setTimeout(r, 700));
         if (popup5.style.display !== "none") fail("离开走廊后未正常关闭(死悬窗)");
     }
-    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
 
     // --- 场景6(0.5.31):走廊缓冲带几何 + grace 阳性不关 + 音频隐藏分型 ---
     await hover(rowPng);
@@ -254,6 +253,28 @@ async function scenario() {
     await new Promise(r => setTimeout(r, 450));
     if (popup6c.style.display !== "none") fail("6c:音频弹窗 700ms 未关(死悬窗)");
 
+    // --- 场景7(0.5.32 🔴 用户实测回归):走廊外接包络巨舱——行下方包络内点必须关 ---
+    // 0.5.29-0.5.31 走廊=两矩形外接包络(行0..300,0..22+popup312..712,34..334→760×382 巨舱),指针停舱内→250ms 链无限
+    // 重挂→移出不关(rig6 复现+0.5.30 对照二分)。0.5.32 改三区并集(各扩24+间隙连接带)。双 rect 覆写复刻真实几何。
+    await hover(rowPng);
+    const popup7 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    if (popup7 && popup7.style.display !== "none") {
+        rowPng.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 22, width: 300, height: 22 });
+        popup7.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 150, clientY: 320 }));
+        const mm7 = explorerRoot._listeners.get("mousemove");
+        if (mm7 && mm7.length) mm7[mm7.length - 1]({ target: explorerRoot, clientX: 150, clientY: 320 });
+        await new Promise(r => setTimeout(r, 800));
+        if (popup7.style.display !== "none") fail("7a:走廊包络回归——行下方包络内点未关(0.5.32 三区几何失效,用户'移出不关'重演)");
+        await hover(rowPng); await new Promise(r => setTimeout(r, 500));
+        const popup7b = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+        popup7b.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 310, clientY: 28 }));
+        const mm7b = explorerRoot._listeners.get("mousemove");
+        if (mm7b && mm7b.length) mm7b[mm7b.length - 1]({ target: explorerRoot, clientX: 310, clientY: 28 });
+        await new Promise(r => setTimeout(r, 800));
+        if (popup7b.style.display === "none") fail("7b:连接带通过点被误关(走廊保活语义破坏)");
+    }
 console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }
 
