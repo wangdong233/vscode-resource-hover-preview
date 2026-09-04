@@ -46,7 +46,9 @@ const graceGuards = (ov.match(/Date\.now\(\) >= zoomGeomGrace/g) || []).length;
 if (graceGuards < 3) fail(`三处 hideTimer fire-time 须让位几何宽限(点复原 rail 缩走误关),实得 ${graceGuards}`);
 const graceArms = (ov.match(/armZoomGeomGrace\(\)/g) || []).length;
 if (!/function armZoomGeomGrace\(\)/.test(ov) || graceArms < 3) fail(`armZoomGeomGrace 须定义+两调用点(zoomBtn/resetBtn 点击),实得 ${graceArms}`);
-if (!/zoomGeomGrace = Date\.now\(\) \+ 650/.test(ov) || !/!isMouseInPopup\(\) && !isPinned && !isPanning && !\(currentHovered && currentHovered\.matches\(":hover"\)\)/.test(ov)) fail("宽限到期须复检真实 :hover(popup 或源行)再定去留(防误关也防死悬窗)");
+if (!/zoomGeomGrace = Date\.now\(\) \+ 650/.test(ov) || !/!isMouseInPopup\(\) && !isPinned && !isPanning && !\(currentHovered && currentHovered\.matches\(":hover"\)\)/.test(ov)) fail("宽限到期(动过)须复检真实 :hover(popup 或源行)再定去留(防误关也防死悬窗)");
+if (!/zoomGeomHold = true; return;/.test(ov)) fail("宽限到期鼠标未动须进入 hold 停驻保持(0.5.26 用户语义:点复原停在原地=不关),而非直接关");
+if (!/if \(!zoomGeomHold\) return;/.test(ov) || !/lastMX = e\.clientX; lastMY = e\.clientY;/.test(ov)) fail("须有 document mousemove 跟踪器(全局坐标记录+hold 首帧移动裁决——死区内无既有监听可达,必须 document 级)");
 
 if (!/function disposeContent\(\) \{[\s\S]{0,420}resetImageZoom\(dPop\)/.test(ov)) fail("disposeContent 须调 resetImageZoom(🔴-1:图→图直切/hidePopup 拆除路径重置 img-zoomed 类+复原按钮,防假按钮假光标)");
 // 4. 媒体隐藏延时 + 几何清理

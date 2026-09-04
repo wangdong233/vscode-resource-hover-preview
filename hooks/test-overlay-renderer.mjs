@@ -57,11 +57,14 @@ class El {
     _qs(root, sel) { return this._qsa(root, sel)[0] || null; }
 }
 const byId = new Map();
+const docLs = new Map();  // 0.5.26:document 级监听(全局 mousemove 跟踪器挂这里)
 const body = new El("body");
 const mkDoc = () => ({
     getElementById: id => byId.get(id) || body._qs(body, "#" + id),  // overlay 直接属性赋 id(不经 setAttribute)→ 须 DOM 树查找兜底
     createElement: t => new El(t),
     createElementNS: (ns, t) => new El(t),
+    addEventListener: (t, fn) => { if (!docLs.has(t)) docLs.set(t, []); docLs.get(t).push(fn); },
+    removeEventListener: (t, fn) => { const l = docLs.get(t); if (l) docLs.set(t, l.filter(f => f !== fn)); },
     querySelector: sel => { if (sel === ".explorer-viewlet") return explorerRoot; return body._qs(body, sel); },
     querySelectorAll: sel => body._qsa(body, sel),
     body, head: new El("head"),
@@ -139,8 +142,9 @@ async function scenario() {
     if (!aud._calls.includes("pause")) fail("audio→image 切换未 pause(disposeContent R2 分支未生效:脱离 DOM 媒体继续出声)");
     if (!aud._calls.includes("removeAttribute:src")) fail("audio 未断 src(转码流继续拉取)");
 
-    // --- 场景3(0.5.25🔴锚):wheel 放大→点复原按钮→mouseleave 不误关(宽限)→到期复检干净关闭 ---
+    // --- 场景3(0.5.25🔴锚+0.5.26 hold 语义):wheel 放大→点复原→mouseleave 不误关→停驻=不关→移动才关 ---
     //    真机根因:点击后 gap2+按钮在光标下隐藏→rail 缩走→Chromium 补发 mouseleave→200ms 误关(用户实测"点复原=浮窗消失")
+    //    0.5.26 用户语义:点复原后停在原地=浮窗保持不关闭;动了才按常规离开语义关
     const popup3 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
     const img3 = popup3 && popup3._qs(popup3, ".mp-content img");
     if (!img3) fail("场景3: img 缺失(前置场景未留 image 渲染)");
@@ -151,15 +155,20 @@ async function scenario() {
         if (!zb) fail("zoomreset 按钮未建");
         else {
             if (zb.style.display !== "flex") fail("zoomBtn 须随 s>1 显示(display=flex),实得 " + zb.style.display);
+            const dmm = docLs.get("mousemove");
+            if (!dmm || !dmm.length) fail("document mousemove 跟踪器未挂(hold 裁决唯一入口)");
             zb.dispatch("click", { stopPropagation() {} });   // 点复原(真机此刻 rail 在光标下缩走)
             popup3.dispatch("mouseleave", {});                // 模拟 Chromium 对"元素自光标下移走"补发的 mouseleave
             await new Promise(r => setTimeout(r, 350));       // > hideDelay(200) 但 < 宽限(650):不得关
             if (popup3.style.display === "none") fail("grace 失效:点复原按钮后被 mouseleave 误关(0.5.25 用户实测🔴回归)");
-            await new Promise(r => setTimeout(r, 600));       // 过宽限到期(650):stub 下 :hover 恒 false → 复检须关
-            if (popup3.style.display !== "none") fail("宽限到期未复检关闭(死悬窗:无 :hover 时须 hidePopup)");
+            await new Promise(r => setTimeout(r, 600));       // 过宽限到期(650):鼠标未动(stub 无 doc mousemove)→hold 停驻保持
+            if (popup3.style.display === "none") fail("hold 失效:停驻原地仍被关(0.5.26 用户语义:点复原停在原地=不关)");
+            (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 900, clientY: 900 }));  // 鼠标动了(死区)
+            await new Promise(r => setTimeout(r, 400));       // > hideDelay(200):恢复常规离开语义→应关
+            if (popup3.style.display !== "none") fail("hold 后移动到死区未关(移动裁决失效:死悬窗)");
         }
     }
-    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限不误关+到期关闭 ✓");
+    console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
 }
 
 await scenario();

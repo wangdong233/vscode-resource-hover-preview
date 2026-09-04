@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.28.17"; // bump:0.5.25 复位体验三修——捏合 K 0.0015→0.01+步长封顶 0.336/复原图标结合式(镜片内四角框)/🔴点复原浮窗误关(rail 在光标下缩走→mouseleave 误发)几何宽限复检制 650ms
+export const INJECT_VERSION = "v0.28.18"; // bump:0.5.26 复原图标v2(最大化四角框+框内复原箭头,用户定案v2)+停驻保持(点复原后鼠标停在原地=浮窗不关,hold 态由 document mousemove 跟踪器首帧移动裁决)
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_RE = /<!--mp-injected:(v[\d.]+):(\w+)-->([\s\S]*?)<!--\/mp-injected-->/;
