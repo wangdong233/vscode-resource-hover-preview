@@ -11,7 +11,7 @@
     var SERVER_BASE = "http://127.0.0.1:" + cfg.port;
     var TOKEN = cfg.token;
     var HOVER_DELAY = 300, HIDE_DELAY = 200, MEDIA_HIDE_DELAY = 400;  // 0.5.20(S2/S5):视频/音频弹窗隐藏延时加长——用户从 explorer 移向底部音量控件需跨 popup 主体,200ms 窗太紧
-function hideDelayMs() { return (activeRendererType === "video" || activeRendererType === "audio") ? MEDIA_HIDE_DELAY : HIDE_DELAY; }
+    function hideDelayMs() { return (activeRendererType === "video" || activeRendererType === "audio") ? MEDIA_HIDE_DELAY : HIDE_DELAY; }
     var isPinned = false;
     var isDragging = false;  // 0.5.13: pin 态浮窗拖动中标志(root mousemove 早退防 currentHovered 漂移 + pinBtn unpin 强制终止用)
     var isPanning = false;   // 0.5.22: 缩放图平移中标志(三处 hideTimer fire-time 守卫防 pan 中弹窗被销毁 + root mousemove/wheel 让出)
@@ -19,7 +19,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     var zoomGeomGrace = 0;   // 0.5.25:复原按钮点击的几何宽限截止时间戳——见 armZoomGeomGrace
     var zoomGeomHold = false;  // 0.5.26:停驻保持——宽限到期时鼠标未动则无限期保持浮窗,由下一次移动裁决(用户语义:点复原后停在原地=不关;"那个位置还有东西"的完整语义)
     var lastMX = -1, lastMY = -1;  // 0.5.26:全局鼠标坐标(document mousemove 记录;hold 裁决"动过没有"的唯一依据)
-    var ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.01, ZOOM_STEP_PINCH = 0.336, ZOOM_DY_MAX = 200;  // 0.5.22:ZOOM_MAX 8→1000(用户决策解除放大上限;千倍=浮点安全护栏,约 35 格到顶,实际无限制)。滚轮一格×1.30;0.5.25:PINCH 0.0015→0.01(用户实测捏合不跟手——mac 捏合合成 wheel 事件 dy 极小(±1~8/次)高频,低增益=迟滞;Excalidraw 同手势 /100=0.01 同量级)+STEP_PINCH 封顶 0.336(=ln1.4≈1.4×/event,防真鼠标 ctrl+滚轮一格 dy~120 跳 2.7×;触控板 dy 小恒不触顶=全增益);单事件 dy 封顶±200
+    var ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.01, ZOOM_STEP_PINCH = 0.336, ZOOM_DY_MAX = 200;  // 0.5.22:ZOOM_MAX 8→1000(用户决策解除放大上限;千倍=浮点安全护栏,ln1000/ln1.3≈26 格到顶(dy=120 计),实际无限制)。滚轮一格×1.30;0.5.25:PINCH 0.0015→0.01(用户实测捏合不跟手——mac 捏合合成 wheel 事件 dy 极小(±1~8/次)高频,低增益=迟滞;Excalidraw 同手势 /100=0.01 同量级)+STEP_PINCH 封顶 0.336(=ln1.4≈1.4×/event,防真鼠标 ctrl+滚轮一格 dy=120 跳 e^1.2≈3.3×;触控板 dy 小恒不触顶=全增益);单事件 dy 封顶±200
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
     var lastRenderedPath = null;  // 0.5.4: 已渲染项路径（startRename 取此,不取 currentHovered——后者可能因 hoverTimer 延迟与显示不同步）
@@ -107,6 +107,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
                 return m.dataUrl;
             }
             return r.json().then(function (d) {
+                if (!d || typeof d.mime !== "string" || typeof d.base64 !== "string") throw new Error("bad image payload");  // 0.5.31 B8:防 data:undefined 静默坏 URL
                 var dataUrl = "data:" + d.mime + ";base64," + d.base64;
                 if (etag) { if (_imgMemo.size > 24) _imgMemo.clear(); _imgMemo.set(p, { etag: etag, dataUrl: dataUrl }); }  // 与 CACHE_MAX 同量级粗防膨胀
                 return dataUrl;
@@ -472,8 +473,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
             if (!isPinned) {
                 if (hideTimer) clearTimeout(hideTimer);
-                var leaveHide = function () { if (!isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (inTransitCorridor()) { hideTimer = setTimeout(leaveHide, 250); return; } hidePopup(); currentHovered = null; } };  // 0.5.29:+走廊守卫(慢速移向控件条 400ms 窗击穿→闪烁)
-                hideTimer = setTimeout(leaveHide, hideDelayMs());  // 0.5.22:+!isPanning;0.5.25:+几何宽限让位
+                hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2:单一裁决工厂(原 4 份复制链收敛)
             }
         });
     }
@@ -534,6 +534,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         if (!isNaN(ct)) popup.style.top = Math.max(28, Math.min(ct, vh2 - h2 - 8)) + "px";
     }
     function hidePopup() {
+        zoomGeomGrace = 0; zoomGeomHold = false;  // 0.5.31 Y3:关闭即复位(grace 到期回调对已关弹窗 hidePopup 幂等,但状态须同刻归零)
         renderEpoch++;  // 0.5.12🟡修:bump 代际→in-flight render3DFull 的 ep 守卫作废,防 popup 已隐藏但其 rAF 动画循环继续空转耗 GPU(3D 资源隐性泄漏)
         var popup = document.getElementById("mp-popup"); if (!popup) return;
         disposeContent(); popup.style.display = "none"; popup.style.width = ""; popup.style.height = ""; popup.style.minHeight = "";  // 0.5.20(A6)+0.5.21🔵-1:含 minHeight(audio 56 残留陷阱):清残留几何,下次 placePopup 不用上一项旧尺寸定位
@@ -553,7 +554,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         }
         activeRendererType = null;
     }
-    function disposeActiveRenderer() { disposeContent(); }  // handleHover 前/切类型时调
+
 
     // ===== hover 监听（event delegation，doc06）=====
     function isExplorerActive() { var v = document.getElementById("workbench.view.explorer"); return !!v && v.offsetParent !== null; }
@@ -571,8 +572,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
                 // 鼠标离开文件项区域 → 计划隐藏
                 if (currentHovered && !isPinned) {
                     if (hideTimer) clearTimeout(hideTimer);
-                    var awayHide2 = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(awayHide2, 250); } };  // 0.5.29:+走廊守卫;currentHovered 仅真关时清(走廊保活期回行 dedup 防重渲染闪烁)
-                    hideTimer = setTimeout(awayHide2, hideDelayMs());
+                    hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2:工厂收敛
                 }
                 return;
             }
@@ -588,12 +588,22 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
             if (currentHovered && !isPinned) {
                 if (hoverTimer) clearTimeout(hoverTimer);
                 if (hideTimer) clearTimeout(hideTimer);
-                var awayHide3 = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(awayHide3, 250); } };
-                hideTimer = setTimeout(awayHide3, hideDelayMs());
+                hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2
             }
         });
     }
     function isMouseInPopup() { var p = document.getElementById("mp-popup"); return p && p.matches(":hover"); }
+    // 0.5.31 F2(02 架构审查):hide 裁决单一工厂——原 leaveHide/awayHide2/awayHide3/holdHide 四份复制链
+    // (0.5.22/25/29 每加守卫改 3-4 处的回改税)收敛为一;四布防点统一传本工厂。
+    // 守卫序:pin/pan/宽限让位 → 指针回 popup 不关 → 走廊内 250ms 重挂 → 真关才清 currentHovered。
+    function armHideChain() {
+        return function chain() {
+            if (isPinned || isPanning || Date.now() < zoomGeomGrace) return;
+            if (isMouseInPopup()) return;  // 0.5.31 B3:原 leaveHide 链缺此检(靠 mouseenter 清 timer 耦合救下),统一补齐
+            if (inTransitCorridor()) { hideTimer = setTimeout(chain, 250); return; }
+            hidePopup(); currentHovered = null;
+        };
+    }
     // 0.5.29 走廊守卫:指针在 popup 与源文件行之间的缓冲走廊(各向外扩 24px 的包围盒)→ 不关浮窗,250ms 后再查。
     // 根因:hideTimer 400ms 窗口只覆盖"快速移动",慢速移向底部控件条时窗口击穿 → hide→re-hover→重渲染 = 用户实测的闪烁抖动。
     // 指针停走廊=意图不明,保活是安全默认(回到行/popup 即恢复常规语义)。
@@ -780,7 +790,8 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return; settled = true;  // latch:错误后不再 settle
             var vext = (filePath.split(".").pop() || "").toLowerCase();
-            if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); return; }  // 非原生(avi/flv/mkv)失败 → 静默关(用户要求不做提醒)
+            if (twin && !twin._mpDead) { twin._mpDead = true; try { twin.pause(); twin.removeAttribute("src"); twin.load(); } catch (e2) {} }  // 0.5.31 B2:twin settle 前不在 DOM,dispose 的 DOM 查询不可达——离屏 /audio 拉取须显式断
+            if (NATIVE_VIDEO.indexOf(vext) < 0) { hidePopup(); currentHovered = null; return; }  // 非原生失败 → 静默关;0.5.31 B4:清 currentHovered(否则同失败行 re-hover 被 dedup 早退→死到换行)
             else { disposeContent(); showPopupError("video 加载失败"); }  // 0.5.29c 🟡-3:先 dispose(pause+断src 双媒体)——否则已解静音的 twin 在错误卡下继续出声(幽灵音频)
         });
     }
@@ -797,7 +808,11 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         audio.preload = "auto"; audio.style.display = "none";  // 无 controls 视觉;交互面全部走 mp-mb
         content.replaceChildren(audio, buildMediaBar(audio));
         var popup = document.getElementById("mp-popup");  // 音频无视觉内容 → popup 折叠成细横条(mp-mb 即全部内容)
-        if (popup) { popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "360px"; if (rect) placePopup(rect); }
+        if (popup) {
+            popup.style.height = "56px"; popup.style.minHeight = "56px"; popup.style.width = "360px";
+            try { var asv = JSON.parse(localStorage.getItem("mp.popupSize.audio") || "{}"); if (asv.w >= 260) popup.style.width = asv.w + "px"; } catch (e5) {}  // 0.5.31 B5:读回用户 resize 宽(高度恒 56 不读;原存了永读不回)
+            if (rect) placePopup(rect);
+        }
         var nativeAudioTried = false;
         audio.addEventListener("error", function () {
             if (ep !== renderEpoch) return;
@@ -999,6 +1014,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
 
     function handleHover(rowEl, rect) {
         if (isPinned) return;  // pin 锁定当前内容，忽略新 hover（审查 3.2）
+        zoomGeomGrace = 0; zoomGeomHold = false;  // 0.5.31 Y3:新渲染即刻失效复位几何宽限/停驻(防 grace 到期回调击杀并发新弹窗闪灭)
         if (editing) { if (activeRenameDone) activeRenameDone(false); }  // 0.5.12🔴修:改名编辑中 .mp-fname 被 input 替换→下方 querySelector(".mp-fname")=null→TypeError 崩。先取消改名恢复 fname 再继续(transit<200ms 常触发)
         var filename = getLabelName(rowEl);
         if (!filename) return;
@@ -1016,7 +1032,7 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
         var fn = popup.querySelector(".mp-fname"); fn.textContent = filename;
         popup.style.display = "flex";
         placePopup(rect);
-        disposeActiveRenderer();  // v0.2-v0.5审查🟡：渲染前清上一类型资源（防累积）
+        disposeContent();  // v0.2-v0.5审查🟡：渲染前清上一类型资源（防累积）;0.5.31 F1:穿堂别名内联
         // loading 占位
         var content = popup.querySelector(".mp-content"); content.replaceChildren();
         var loading = document.createElement("div"); loading.textContent = "loading…"; loading.style.color = "#888"; content.appendChild(loading);
@@ -1046,14 +1062,14 @@ function hideDelayMs() { return (activeRendererType === "video" || activeRendere
     //   (popup mouseleave 已发过 / root mousemove 只盖 explorer / popup 自身无 mousemove 监听)→ 必须 document 级。
     //   首帧移动即结束 hold:光标在 popup 内=常规驻留不动;在死区=恢复常规离开语义(200ms 后关)。
     //   capture 保证先于 explorer root 处理器跑(移动到源行场景:先排 hideTimer,root 行处理器随即清之,零竞态)。
+    document.addEventListener("mouseleave", function () { lastMX = -1; lastMY = -1; });  // 0.5.31 B6:指针出窗→视为离走廊/离 hold(否则 lastMX 冻结在走廊内,250ms 链无限续;回窗 mousemove 即恢复)
     document.addEventListener("mousemove", function (e) {
         lastMX = e.clientX; lastMY = e.clientY;
         if (!zoomGeomHold) return;
         zoomGeomHold = false;
         if (!isMouseInPopup() && !isPinned && !isPanning) {
             if (hideTimer) clearTimeout(hideTimer);
-            var holdHide = function () { if (!isMouseInPopup() && !isPinned && !isPanning && Date.now() >= zoomGeomGrace) { if (!inTransitCorridor()) { hidePopup(); currentHovered = null; return; } hideTimer = setTimeout(holdHide, 250); } };
-            hideTimer = setTimeout(holdHide, hideDelayMs());
+            hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2
         }
     }, true);
 

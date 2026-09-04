@@ -7,7 +7,8 @@ import * as fs from "fs";
 import * as cp from "child_process";
 import { startPreviewServer, ensureAudioCacheByPath } from "./server";
 
-const PATCH_JS = path.join(__dirname, "..", "patcher.js"); // INSTALL_DIR/patcher.js（installRuntimeFiles 复制）
+const PATCH_JS = path.join(__dirname, "..", "patcher.js");
+let prewarmDisposed = false;  // 0.5.31 🟡-5:Disable 扩展(EH 存活)时停预热(原 8min 循环继续派生新 job;模块级供 prewarmAudioCache 读) // INSTALL_DIR/patcher.js（installRuntimeFiles 复制）
 
 export async function activate(context: vscode.ExtensionContext) {
     const output = vscode.window.createOutputChannel("Resource Hover Preview");
@@ -30,8 +31,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // 0.5.30 音频旁路预热:启动 12s 后(避宿主启动抢 IO/CPU)后台串行预提取 AAC 家族音轨 → 消除首次悬停 ~1.4s。
     // 护栏:nice -n 10 低优先级(server 内) + 串行+250ms 间隔 + 预算(80 文件/8min)+ mtime 降序(最近动的更可能被预览)
     //     + 50MB 单文件上限 + node_modules 排除;预热与用户实时请求同键合流(server _audioJobs)。可配置 prewarmAudio 关闭。
+
+    const prewarmTimer = setTimeout(() => { prewarmAudioCache(output).catch(() => { /* ignore */ }); }, 12000);
+    context.subscriptions.push({ dispose: () => { prewarmDisposed = true; clearTimeout(prewarmTimer); } });
     const prewarmEnabled = vscode.workspace.getConfiguration("resource-hover-preview").get<boolean>("prewarmAudio", true);
-    if (prewarmEnabled) setTimeout(() => { prewarmAudioCache(output).catch(() => { /* ignore */ }); }, 12000);
+    if (!prewarmEnabled) { clearTimeout(prewarmTimer); }
 
     // 审查 2.4：enabled 配置变更 → 重新 bake mp-config（需 Cmd+Q 生效，因 mp-config.js 走磁盘缓存）
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
@@ -81,7 +85,7 @@ function runPatcher(output: vscode.OutputChannel) {
 
 function spawnPatcher(args: string[], output: vscode.OutputChannel) {
     if (!fs.existsSync(PATCH_JS)) { vscode.window.showWarningMessage(`patcher not found: ${PATCH_JS}`); return; }
-    const child = cp.spawn(findNodeBin(), [PATCH_JS, ...args], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+    const child = cp.spawn(findNodeBin(), [PATCH_JS, ...args], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
     const out: string[] = []; child.stdout?.on("data", d => out.push(d.toString()));
     const err: string[] = []; child.stderr?.on("data", d => err.push(d.toString()));  // 0.5.24 B4:对齐 runPatcher 三件套(原无 error handler→ENOENT unhandled 崩;无超时;无 stderr)
     const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch { /* ignore */ } }, 30000);
@@ -109,6 +113,7 @@ async function prewarmAudioCache(output: vscode.OutputChannel): Promise<void> {
         .filter((x): x is { p: string; m: number } => !!x).sort((a, b) => b.m - a.m).slice(0, PREWARM_MAX_FILES);
     let extracted = 0, noaudio = 0;
     for (const c of cands) {
+        if (prewarmDisposed) return;  // 0.5.31 🟡-5
         if (Date.now() - t0 > PREWARM_BUDGET_MS) break;
         try {
             const r = await ensureAudioCacheByPath(c.p, true);  // lowPriority: nice + 用户实时请求同键合流

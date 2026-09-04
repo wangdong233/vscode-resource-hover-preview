@@ -201,7 +201,7 @@ function findFfmpeg(): Promise<string | null> {
     const candidates = ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"];
     _ffmpegPromise = (async () => {
         for (const p of candidates) {
-            try { await new Promise<void>((res, rej) => execFile(p, ["-version"], { timeout: 2000 }, (err: Error | null) => err ? rej(err) : res())); return p; }
+            try { await new Promise<void>((res, rej) => execFile(p, ["-version"], { timeout: 2000, windowsHide: true }, (err: Error | null) => err ? rej(err) : res())); return p; }  // 0.5.31 🟡-4
             catch { /* 试下一个 */ }
         }
         return null;
@@ -231,8 +231,8 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
         return;
     }  // 无 ffmpeg→404(overlay error→回退原生);或探测期间客户端已断开
     const isAudio = type === "audio";
-    // 0.5.28:vc=webm 强制走重编码路(overlay 自愈梯:remux 产物音频解码 0 字节时整转重试)——跳过 ffprobe 直取 webm
-    const forceWebm = !isAudio && url.searchParams.get("vc") === "webm";
+
+
     // 0.5.27 🔴根因修正:video 输出禁 AAC(VSCode 出厂 libffmpeg 无 AAC——本机二进制已验:仅 h264/flac/mp3/pcm/vorbis/vp8
     //   +Chromium 内建 libopus;vscode#329811/#310736 同证)→ fMP4+AAC 在 workbench 里视频可见而音轨死
     //   (HasAudio()=false→原生 mute 置 disabled 死键+无声)。双路输出,全部落在 VSCode 实持有的解码器集合:
@@ -241,20 +241,20 @@ async function serveTranscode(url: URL, req: http.IncomingMessage, res: http.Ser
     //   ② 其余(avi-mpeg4/prores/hevc…)→ webm/VP8/Opus 重编码(scale=640 保 realtime)
     //   音频支路 WAV(pcm_s16le)本就是自由编解码,不动。
     let vcodec = "";
-    if (!isAudio && !forceWebm) {  // 0.5.28:vc=webm 跳过探测直取重编码
+    if (!isAudio) {  // 0.5.31 F3:vc 死参数已删(0.5.28 自愈梯残留,overlay 零消费)
         const ffprobe = ff.replace(/ffmpeg$/, "ffprobe");
         try {
-            vcodec = await new Promise<string>((res2, rej2) => execFile(ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", realPath], { timeout: 4000 }, (e: Error | null, out?: string) => e ? rej2(e) : res2((out || "").trim().split("\n")[0] || "")));
+            vcodec = await new Promise<string>((res2, rej2) => execFile(ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0", realPath], { timeout: 4000, windowsHide: true }, (e: Error | null, out?: string) => e ? rej2(e) : res2((out || "").trim().split("\n")[0] || "")));  // 0.5.31b windowsHide
         } catch { vcodec = ""; if (!_ffprobeMissLogged) { _ffprobeMissLogged = true; console.error("[mp] ffprobe 不可用 — h264 remux 快路降级为 webm 重编码慢路(ffmpeg 同源 ffprobe 缺失;0.5.8 教训:静默降级必留痕)"); } }
     }
-    const remux = !forceWebm && vcodec === "h264";
+    const remux = vcodec === "h264";
     const args = isAudio
         ? ["-i", realPath, "-f", "wav", "-c:a", "pcm_s16le", "-"]
         : remux
             ? ["-i", realPath, "-c:v", "copy", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-"]  // -ar 44100:钉死输出采样率(ffmpeg 自动重采样因版本而异;实证 8.1.2 对 96k 源自动降采 48k 不报错——0.5.28b 审查纠注,原"会失败"论断不实)
             : ["-i", realPath, "-vf", "scale=640:-2", "-f", "webm", "-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "5", "-b:v", "2M", "-c:a", "libopus", "-b:a", "96k", "-"];
     let ffmpeg;
-    try { ffmpeg = spawn(ff, args, { stdio: ["ignore", "pipe", "pipe"] }); }
+    try { ffmpeg = spawn(ff, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true }); }  // 0.5.31 🟡-4:Windows 默认弹黑框
     catch { res.writeHead(500); res.end("spawn failed"); return; }
     let headersSent = false;
     let stderrBuf = "";
@@ -280,7 +280,7 @@ function cacheEvict(keepPath: string): void {  // 懒驱逐:超 300MB 删最旧(
         const entries = fs.readdirSync(AUDIO_CACHE_DIR).map(f => { const p = path.join(AUDIO_CACHE_DIR, f); try { return { p, st: fs.statSync(p) }; } catch { return null; } }).filter(Boolean) as { p: string; st: fs.Stats }[];
         let total = entries.reduce((a, e) => a + e.st.size, 0);
         if (total <= AUDIO_CACHE_MAX_BYTES) return;
-        entries.filter(e => e.p !== keepPath).sort((a, b) => a.st.mtimeMs - b.st.mtimeMs).forEach(e => {
+        entries.filter(e => e.p !== keepPath).filter(e => !/\.[0-9]{13}\.mp3$/.test(path.basename(e.p))).sort((a, b) => a.st.mtimeMs - b.st.mtimeMs).forEach(e => {  // 0.5.31 🟡-2:跳过在途 tmp
             if (total <= AUDIO_CACHE_MAX_BYTES) return;
             try { fs.unlinkSync(e.p); total -= e.st.size; } catch { /* ignore */ }
         });
@@ -323,10 +323,10 @@ export async function ensureAudioCacheByPath(filePath: string, lowPriority: bool
         try { fs.mkdirSync(AUDIO_CACHE_DIR, { recursive: true }); } catch { return null; }
         const tmp = cached + "." + Date.now() + ".mp3";  // ⚠️ 须 .mp3 后缀:ffmpeg 按扩展名推输出格式,.tmp 会失败(0.5.29 rig 实证;配合显式 -f mp3 双保险)
         const argv = ["-i", realPath, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", "-ar", "44100", "-f", "mp3", tmp];
-        let ffTimeout = false;
+        let ffTimeout = false, se2 = "";  // 0.5.31 🟡-3:se2 供负缓存确定性判定
         const ok = await new Promise<boolean>(r2 => {
             const run = (bin: string, pre: string[]) => execFile(bin, [...pre, ...argv], { timeout: 120000, windowsHide: true }, (e: Error | null, _so?: string, se?: string) => {  // 0.5.30b:windowsHide(Windows 默认弹控制台黑框,Node child_process 文档)
-                if (e) { ffTimeout = !!(e as { killed?: boolean }).killed; console.error("[mp] /audio 提取失败" + (ffTimeout ? "(超时)" : "") + ":", (se || e.message || "").slice(0, 300)); }
+                if (e) { se2 = se || ""; ffTimeout = !!(e as { killed?: boolean }).killed; console.error("[mp] /audio 提取失败" + (ffTimeout ? "(超时)" : "") + ":", (se || e.message || "").slice(0, 300)); }
                 r2(!e);
             });
             if (lowPriority && process.platform === "darwin" && fs.existsSync("/usr/bin/nice")) run("/usr/bin/nice", ["-n", "10"]);
@@ -336,7 +336,8 @@ export async function ensureAudioCacheByPath(filePath: string, lowPriority: bool
             const st2 = ok ? fs.statSync(tmp) : null;
             if (st2 && st2.size > 0) { fs.renameSync(tmp, cached); cacheEvict(cached); return cached; }  // 原子落位(并发双写者 last-win 无害)
             try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-            if (!ffTimeout) fs.writeFileSync(marker, "");  // 超时(killed)不落负缓存——瞬时失败允许下轮重试
+            const noStream = /does not contain any stream|Stream map|Output file does not contain/i.test(se2 || "");  // 0.5.31 🟡-3:仅确定性无音轨负缓存(盘满/OOM 瞬时错不钉死)
+            if (noStream) fs.writeFileSync(marker, "");
             return null;
         } catch { try { fs.unlinkSync(tmp); } catch { /* ignore */ } return null; }
     })();
@@ -357,9 +358,14 @@ async function serveAudioExtract(url: URL, req: http.IncomingMessage, res: http.
         const realRoots = roots.map(r => { try { return fs.realpathSync(r); } catch { return r; } });
         if (!realRoots.some(r => realPath === r || realPath.startsWith(r + path.sep))) { res.writeHead(403); res.end("outside workspace"); return; }
     }
-    const cachedPath = await ensureAudioCacheByPath(realPath, false);
+    let cachedPath = await ensureAudioCacheByPath(realPath, false);
     if (!cachedPath) { res.writeHead(404); res.end("no audio"); return; }  // 无音轨/无 ffmpeg/提取失败(负缓存已按需落)
     let cstat: fs.Stats;
-    try { cstat = fs.statSync(cachedPath); } catch { res.writeHead(500); res.end("cache miss"); return; }
+    try { cstat = fs.statSync(cachedPath); }
+    catch {  // 0.5.31 🟡-2:exists↔stat 间被 evict 删的窄窗——重试一次而非 500
+        const retryPath = await ensureAudioCacheByPath(realPath, false);
+        if (!retryPath) { res.writeHead(500); res.end("cache miss"); return; }
+        try { cstat = fs.statSync(retryPath); cachedPath = retryPath; } catch { res.writeHead(500); res.end("cache miss"); return; }
+    }
     serveStaticAudio(cachedPath, cstat, etagOf(cstat), req, res);  // 0.5.29c 🔴-1修:etagOf(缓存键内容寻址,同键字节不变/覆盖换键恒新)
 }

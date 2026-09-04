@@ -117,7 +117,7 @@ console.log("[3/3] 收尾。");
 // 0.5.29c /audio HTTP 层(🔴-1 复发防线):自足 server 真跑 200+ETag → If-None-Match 304 → Range 206
 {
   const { spawnSync } = await import("node:child_process");
-  const ffq = ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"].find(p => { try { spawnSync(p, ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch { return false; } });
+  const ffq = ["ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"].find(p => { try { spawnSync(p, ["-version"], { stdio: "ignore", timeout: 2000 }); return true; } catch { return false; } });  // 0.5.31 🔵-4:与 server 四候选对齐
   if (!ffq) console.log("    /audio: 无 ffmpeg → skip");
   else {
     const dirA = mkdtempSync(join(tmpdir(), "mp-aud-"));
@@ -138,6 +138,11 @@ console.log("[3/3] 收尾。");
     const r3 = await fetch(au, { headers: { Range: "bytes=0-99" } });
     if (r3.status !== 206 || r3.headers.get("content-length") !== "100") fail("/audio Range 失效(" + r3.status + ")");
     console.log("    /audio: 200+ETag / 304 / 206 ✓");
+    // 0.5.31 🟡-7:containment 403 反例(删 server containment 块曾致八闸全绿——mutation 幸存者)
+    const outsidePath = join(tmpdir(), "mp-aud-out-" + Date.now() + ".mp4");  // 真建工作区外文件(原从不落盘→404 短路 containment,假防线——终验 M7 抓)
+    spawnSync(ffq, ["-f", "lavfi", "-i", "sine=duration=1", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=5", "-c:a", "aac", "-c:v", "libx264", "-shortest", outsidePath, "-y"], { stdio: "ignore", timeout: 20000 });
+    const rOut = await fetch("http://127.0.0.1:" + srvA.server.address().port + "/audio?file=" + encodeURIComponent(outsidePath) + "&token=" + tokA);
+    if (rOut.status !== 403) fail("/audio containment 失效(工作区外真实文件实得 " + rOut.status + ",须 403——无 404 兜底)");
     // 0.5.30 预热函数:二次调用走缓存(<100ms)——EH 启动预热消费的同一入口
     const ensure = (modA2 => modA2.ensureAudioCacheByPath || modA2.default?.ensureAudioCacheByPath)(await import(pathToFileURL(base + "companion/dist/server.js").href));
     const tA = Date.now(); const rA = await ensure(srcV, true); const firstMs = Date.now() - tA;

@@ -29,8 +29,9 @@ function injectCspDirective(csp: string, directive: string, token: string): stri
 // 0.4.6：加 <script defer src="./mp-three.js"> —— three.js 2MB bundle 静态注入（唯一 TT-safe 加载法；
 //   import(blob:)/eval 都被 workbench require-trusted-types-for 拦）。defer=后台加载不阻塞 workbench 启动。
 export function injectScriptTag(html: string, version: string, overlayHash: string): string {
-    const block = `<!--mp-injected:${version}:${overlayHash}-->\n<script src="./mp-config.js"></script>\n<script defer src="./mp-three.js"></script>\n<script src="./mp-overlay.js"></script>\n<!--/mp-injected-->\n`;
+    const block = `<!--mp-injected:${version}:${overlayHash}-->\n<script src="./mp-config.js"></script>\n<script defer src="./mp-three.js"></script>\n<script src="./mp-overlay.js"></script>\n${MARKER_BLOCK_CLOSE}\n`;
     if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${block}</html>`);
     if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${block}</body>`);
     return html + block;
-}
+}import { MARKER_BLOCK_CLOSE } from "./patcher-state.js";
+

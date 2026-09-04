@@ -120,15 +120,20 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
         }
         // 0.5.11: main.js autoplay 残留清理（0.5.10 废弃特性的迁移 strip,幂等）
         try { stripMainAutoplay(mainJsPath); } catch (e) { console.warn(`[mp] main.js strip skipped: ${(e as Error).message}`); }
-        if (state === "fresh") {
+        const markerNow = html.match(/<!--mp-injected:(v[\d.]+):([0-9a-f]+)-->/);  // 0.5.31 Y7:fresh 须比 hash 不只比版本(同版本号追加编辑曾致 fresh 误判,靠运气不靠机制)
+        const bakedOverlay = findBakedOverlay();
+        const bakedHash = bakedOverlay ? (fs.readFileSync(bakedOverlay, "utf8").match(/mp-overlay:v[\d.]+:([0-9a-f]+)/)?.[1] ?? null) : null;
+        const fresh = state === "fresh" && markerNow?.[1] === INJECT_VERSION && (bakedHash === null || markerNow?.[2] === bakedHash);
+        if (fresh) {
             // v0.1审查🔵：fresh 也校验 mp-overlay.js + mp-three.js 存在（被删则补拷，否则 script 404 静默死）
             const wbDir = path.dirname(workbenchHtmlPath);
             const overlayDest = path.join(wbDir, "mp-overlay.js");
-            const overlaySrc = findBakedOverlay();
-            if (overlaySrc && !fs.existsSync(overlayDest)) atomicCopyFileSync(overlaySrc, overlayDest);
+            if (bakedOverlay && !fs.existsSync(overlayDest)) atomicCopyFileSync(bakedOverlay, overlayDest);
+            else if (!bakedOverlay) console.warn("[mp] fresh: INSTALL_DIR 无 baked overlay,跳过补拷(重装/目录残缺?)");  // 0.5.31 🔵-1:原静默
             const threeDest = path.join(wbDir, "mp-three.js");
             const threeSrc = findThreeBundle();
             if (threeSrc && !fs.existsSync(threeDest)) atomicCopyFileSync(threeSrc, threeDest);
+            else if (!threeSrc) console.warn("[mp] fresh: mp-three.bundle.js 缺失,3D 预览不可用");  // 0.5.31 🔵-1
             return "fresh";
         }
 
@@ -138,6 +143,7 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
         let ver: string | undefined;  // 0.5.12🟡:ver 读入 try(原在 try 外——product.json 损坏时此行抛→冒泡 withLock→无 rollback→workbench 未备份留错态)
         try {
             ver = JSON.parse(fs.readFileSync(productJsonPath, "utf8")).version;
+            if (!ver) { console.error("[mp] product.json 无 version 字段——拒绝 patch(防 .bak.undefined 残留+无版本名不可回滚)"); return "failed"; }  // 0.5.31 B10
             backupIfAbsent(workbenchHtmlPath, `${workbenchHtmlPath}.mp.bak.${ver}`);
             backupIfAbsent(productJsonPath, `${productJsonPath}.mp.bak.${ver}`);
 
@@ -165,7 +171,8 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
             const wbKey = deriveChecksumKey(workbenchHtmlPath, outDir);
             const markerM = verifyHtml.match(/<!--mp-injected:(v[\d.]+):([0-9a-f]+)-->/);  // 0.5.12🔵:完整 marker 校验(版本+hash,原仅 prefix includes 过弱)
             if (!markerM || markerM[1] !== INJECT_VERSION || markerM[2] !== overlayHash) throw new Error(`marker verify fail: ${markerM?.[0] ?? "missing"}`);
-            if (product2.checksums[wbKey] !== recomputeChecksum(workbenchHtmlPath)) throw new Error("checksum mismatch");
+            if (!product2.checksums) { console.warn("[mp] fork product.json 无 checksums——跳过 checksum 更新与校验(fork 产物常见形态,照常 patch)"); }  // 0.5.31 Y5:原 ?. 缺失致 fork 抛 TypeError 文案为堆栈
+            else if (product2.checksums[wbKey] !== recomputeChecksum(workbenchHtmlPath)) throw new Error("checksum mismatch");
             return "patched";
         } catch (e) {
             if (ver) {  // 0.5.12🟡:ver 读到才回滚(未读到则 bak 名含 undefined 无意义)
@@ -190,6 +197,8 @@ function runRevert(installs: Install[]): void {
             if (fs.existsSync(overlayDest)) fs.rmSync(overlayDest);
             const cfgDest = path.join(path.dirname(workbenchHtmlPath), "mp-config.js");
             if (fs.existsSync(cfgDest)) fs.rmSync(cfgDest);
+            const threeRm = path.join(path.dirname(workbenchHtmlPath), "mp-three.js");  // 0.5.31 B9:revert 曾漏删(孤儿文件)
+            if (fs.existsSync(threeRm)) fs.rmSync(threeRm);
             console.log(`[mp] reverted ${inst.flavor}`);
         } catch (e) { console.error(`[mp] revert failed ${inst.flavor}: ${(e as Error).message}`); }
     }
@@ -239,8 +248,8 @@ function rollbackVersionedBak(targetPath: string): void {
     const dir = path.dirname(targetPath);
     const base = path.basename(targetPath);
     try {
-        const baks = fs.readdirSync(dir).filter(f => f.startsWith(base + ".mp.bak.")).sort();
-        if (baks.length) fs.copyFileSync(path.join(dir, baks[baks.length - 1]), targetPath);
+        const baks = fs.readdirSync(dir).filter(f => f.startsWith(base + ".mp.bak.")).sort((a, b) => cmpVerStr(a.slice((base + ".mp.bak.").length), b.slice((base + ".mp.bak.").length)));  // 0.5.31 Y3:字典序曾致 1.10.0<1.9.0 倒挂取旧 bak
+        if (baks.length) atomicCopyFileSync(path.join(dir, baks[baks.length - 1]), targetPath);  // 0.5.31b:原子还原(Y6 同类,终验备注 a)
     } catch { /* 无 bak 静默（首次 revert 无备份） */ }
 }
 function readOrGenToken(installDir: string): string {
@@ -275,4 +284,4 @@ function copyDirFiles(srcDir: string, destDir: string, ext: string): void {
     }
 }
 
-main();
+main().catch(e => { console.error("[mp] fatal:", e instanceof Error ? e.message : e); process.exit(1); });  // 0.5.31 Y4:裸 main() 四处 throw 逃逸(EACCES/盘满/status 读)曾 unhandledRejection 丑崩且无结构化 marker

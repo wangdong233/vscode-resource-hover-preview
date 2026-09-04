@@ -39,7 +39,7 @@ class El {
     removeEventListener(t, fn) { const l = this._listeners.get(t); if (l) this._listeners.set(t, l.filter(f => f !== fn)); }
     dispatch(t, ev) { (this._listeners.get(t) || []).slice().forEach(fn => fn(ev || {})); }
     getBoundingClientRect() { return { left: 100, top: 100, width: this.offsetWidth, height: this.offsetHeight, right: 100 + this.offsetWidth, bottom: 100 + this.offsetHeight }; }
-    matches() { return false; } closest() { return null; }
+    matches(sel) { return String(sel).includes(":hover") ? !!this._hover : false; } closest() { return null; }  // 0.5.31 Y5::hover 可注入
     querySelector(sel) { return this._qs(this, sel); } querySelectorAll(sel) { return this._qsa(this, sel); }
     focus() {} select() {} load() { this._calls.push("load"); }
     play() { this._calls.push("play"); this.paused = false; return Promise.resolve(); }
@@ -223,6 +223,36 @@ async function scenario() {
         if (popup5.style.display !== "none") fail("离开走廊后未正常关闭(死悬窗)");
     }
     console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
+
+    // --- 场景6(0.5.31):走廊缓冲带几何 + grace 阳性不关 + 音频隐藏分型 ---
+    await hover(rowPng);
+    const popup6 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    const img6 = popup6 && popup6._qs(popup6, ".mp-content img");
+    if (img6 && popup6 && popup6.style.display !== "none") {
+        // 6a 带内 popup 外点 (108,80) vs 带外 (60,60):用同构几何复算(overlay 内部判定不可直达)
+        const band = (x, y) => x >= 76 && x <= 524 && y >= 76 && y <= 424;  // stub popup rect 100..500/100..400 ±24
+        if (!band(108, 80) || band(60, 60)) fail("6a:走廊带几何复算自洽性破(改 stub rect 须同步)");
+        // 6b grace 阳性:武装→指针回 popup(_hover=true)→过 650ms 不得关
+        popup6.dispatch("wheel", { deltaY: -120, deltaMode: 0, ctrlKey: false, clientX: 200, clientY: 200, target: img6, preventDefault() {} });
+        const zb6 = popup6._qsa(popup6, "button").find(b => b.className.includes("mp-zoomreset"));
+        if (zb6 && img6._mpZoom) { (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 200, clientY: 200 })); zb6.dispatch("click", { stopPropagation() {} }); }
+        popup6._hover = true;
+        await new Promise(r => setTimeout(r, 800));
+        if (popup6.style.display === "none") fail("6b:grace 到期指针在 popup 内被误关(isMouseInPopup 阳性分支失效——Y5 盲区回归)");
+        popup6._hover = false;
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 60, clientY: 60 }));
+        await new Promise(r => setTimeout(r, 800));  // hold 裁决→带外→关
+    }
+    // 6c 音频隐藏分型:移开后 250ms 不关(媒体档 400ms),700ms 已关
+    await hover(rowMp3);
+    const popup6c = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 1500, clientY: 1500 }));
+    const mm6 = explorerRoot._listeners.get("mousemove");
+    if (mm6 && mm6.length) mm6[mm6.length - 1]({ target: explorerRoot, clientX: 1500, clientY: 1500 });
+    await new Promise(r => setTimeout(r, 250));
+    if (popup6c.style.display === "none") fail("6c:音频弹窗 250ms 即关(媒体档 400ms 分型失效)");
+    await new Promise(r => setTimeout(r, 450));
+    if (popup6c.style.display !== "none") fail("6c:音频弹窗 700ms 未关(死悬窗)");
 
 console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }

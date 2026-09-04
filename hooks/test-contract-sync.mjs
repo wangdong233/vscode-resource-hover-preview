@@ -109,6 +109,21 @@ if (!/e\.preventDefault\(\); e\.stopPropagation\(\);[\s\S]{0,150}resetImageZoom\
 if (!/savePopupSize\(popup\.offsetWidth, popup\.offsetHeight\);[\s\S]{0,150}resetImageZoom\(popup\)/.test(overlay)) fail("resize onUp 未调 resetImageZoom(拖角+滚动并发竞态残留)");
 
 if (fails) { console.error(`\nFAIL: test-contract-sync（${fails} 处跨边界同步失配）`); process.exit(1); }
+// 0.5.31 Y2:overlay↔zoom-sim 常量同步对(0.5.25 曾漂移:PINCH 0.0015→0.01 改了 overlay 忘 sim,03 §1.7 项7 实锤)
+const ovSrc2 = readFileSync(base + "resources/overlay.template.js", "utf8");
+// 0.5.31 F4:AAC 家族事实互检(overlay TWIN_NEEDED+renderAudio 分支 ↔ extension prewarm glob——三源曾无互检,扩家族静默漂移)
+const twinM = ovSrc2.match(/var TWIN_NEEDED = \[([^\]]+)\];/);
+const globM = readFileSync(base + "companion/src/extension.ts", "utf8").match(/findFiles\("\*\*\/\*\.{([^}]+)}"/);
+const twinSet = new Set((twinM ? twinM[1] : "").split(",").map(x => x.trim().replace(/"/g, "")).filter(Boolean));
+const globSet = new Set((globM ? globM[1] : "").split(",").map(x => x.trim()).filter(Boolean));
+for (const ext of twinSet) if (!globSet.has(ext)) fail("F4: TWIN_NEEDED 含 " + ext + " 而 prewarm glob 不含(旁路家族漂移)");
+for (const ext of globSet) if (!twinSet.has(ext) && ext !== "m4a" && ext !== "aac") fail("F4: prewarm glob 含 " + ext + " 而 TWIN_NEEDED 不含(m4a/aac 例外=音频文件主源)");
+const simSrc2 = readFileSync(base + "hooks/zoom-invariant-sim.reference.js", "utf8");
+for (const cnst of ["ZOOM_MAX", "ZOOM_K", "ZOOM_K_PINCH", "ZOOM_STEP_PINCH", "ZOOM_DY_MAX"]) {
+    const rx = new RegExp(cnst + " = ([0-9.]+)");
+    const a = ovSrc2.match(rx), b2 = simSrc2.match(rx);
+    if (!a || !b2 || a[1] !== b2[1]) fail(cnst + " overlay(" + (a && a[1]) + ") ↔ sim(" + (b2 && b2[1]) + ") 漂移——§1.7 项7 同步对");
+}
 // 0.5.29c 🟡-4:root↔companion 版本等值(曾漂移 5 版——重装 vsix 即回退)
 const rootV = JSON.parse(readFileSync(base + "package.json", "utf8")).version;
 const compV = JSON.parse(readFileSync(base + "companion/package.json", "utf8")).version;

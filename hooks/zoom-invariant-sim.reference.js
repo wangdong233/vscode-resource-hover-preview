@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// REFERENCE ONLY — 不在 npm test 链内。overlay.template.js 滚轮缩放锚定数学的数值镜像(0.5.23 同步 ZOOM_MAX=1000)。
-// ⚠️ 改 overlay 缩放常量/公式必须同步本文件(03 §1.7 项7 diff 闸门:改配对一侧须 grep 另一侧);行号不锚定,以符号名为准。
+// overlay.template.js 滚轮缩放锚定数学的数值镜像(0.5.31 Y2 修:0.5.25 常量漂移+STEP 缺失被 03 审查抓——现挂入 npm test 链,常量漂移即红)。
+// ⚠️ 改 overlay 缩放常量/公式必须同步本文件(03 §1.7 项7);行号不锚定,以符号名为准。
 "use strict";
-const ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.0015, ZOOM_DY_MAX = 200;
+const ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.01, ZOOM_STEP_PINCH = 0.336, ZOOM_DY_MAX = 200;
 
 // geometry model: content rect + centered img layout box (flex centering (flex 居中反推))
 const CR = { left: 100, top: 100, width: 400, height: 300 };
@@ -13,8 +13,9 @@ const IY = CR.top + (CR.height - IH) / 2;  // 115
 // exact port of the handler's per-event math (returns new z + diagnostics)
 function wheelStep(z, clientX, clientY, rawDy, ctrlKey) {
   let dy = rawDy; if (dy > ZOOM_DY_MAX) dy = ZOOM_DY_MAX; else if (dy < -ZOOM_DY_MAX) dy = -ZOOM_DY_MAX;
-  const k = ctrlKey ? ZOOM_K_PINCH : ZOOM_K;
-  const sNext = Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(-dy * k)));
+  let step = -dy * (ctrlKey ? ZOOM_K_PINCH : ZOOM_K);
+  if (ctrlKey && step > ZOOM_STEP_PINCH) step = ZOOM_STEP_PINCH; else if (ctrlKey && step < -ZOOM_STEP_PINCH) step = -ZOOM_STEP_PINCH;  // 0.5.25 捏合支路步长封顶(原 sim 缺失)
+  const sNext = Math.min(ZOOM_MAX, Math.max(1, z.s * Math.exp(step)));
   if (sNext === z.s) return { z, kind: "noop", dyEff: dy };
   if (sNext === 1) return { z: { s: 1, tx: 0, ty: 0 }, kind: "reset", dyEff: dy, sNext };
   const px = (clientX - IX - z.tx) / z.s, py = (clientY - IY - z.ty) / z.s;
