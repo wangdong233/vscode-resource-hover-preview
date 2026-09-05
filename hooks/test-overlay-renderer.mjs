@@ -116,6 +116,7 @@ async function scenario() {
     if (!mm || !mm.length) { fail("explorer mousemove 监听未挂(waitForExplorer/setupHoverListeners 未跑通)"); return; }
     byId.set("workbench.view.explorer", { offsetParent: {} }); // isExplorerActive
 
+    const pump = async (x, y, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: x, clientY: y + (Date.now() % 2 ? 1 : -1) })); await new Promise(r => setTimeout(r, 150)); } };  // 0.5.33:移动中指针模拟(每 150ms 泵一次,坐标微动=真在移动)——静止长等=按新语义应关,通过场景必须泵动
     const hover = async (row) => { mm[mm.length - 1]({ target: row, clientX: 200, clientY: 200 }); await new Promise(r => setTimeout(r, 420)); };
 
     // --- 场景1: image hover 全链 → closeBtn click 不抛且隐藏(R1 锚) ---
@@ -215,11 +216,11 @@ async function scenario() {
         (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 200, clientY: 200 }));  // 指针进走廊(stub popup rect 100..500/100..400,+24 缓冲含 200,200)
         const mm5 = explorerRoot._listeners.get("mousemove");
         if (mm5 && mm5.length) mm5[mm5.length - 1]({ target: explorerRoot, clientX: 200, clientY: 200 });  // 非行区 mousemove → 计划关闭
-        await new Promise(r => setTimeout(r, 900));  // > 400ms 媒体延时 + 250ms 重查一轮
+        await pump(200, 200, 900);  // 0.5.33:通过中=移动指针(走廊点;>400ms 媒体延时+250ms 重查)
         if (popup5.style.display === "none") fail("走廊守卫失效:指针在走廊内浮窗被关(慢速移向控件条闪烁回归)");
         (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 1500, clientY: 1500 }));  // 离开走廊
         if (mm5 && mm5.length) mm5[mm5.length - 1]({ target: explorerRoot, clientX: 1500, clientY: 1500 });
-        await new Promise(r => setTimeout(r, 700));
+        await pump(1500, 1500, 700);  // 0.5.33:离开后(远点,移动也不保活)
         if (popup5.style.display !== "none") fail("离开走廊后未正常关闭(死悬窗)");
     }
 
@@ -272,8 +273,17 @@ async function scenario() {
         (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 310, clientY: 28 }));
         const mm7b = explorerRoot._listeners.get("mousemove");
         if (mm7b && mm7b.length) mm7b[mm7b.length - 1]({ target: explorerRoot, clientX: 310, clientY: 28 });
-        await new Promise(r => setTimeout(r, 800));
+        await pump(310, 28, 800);  // 0.5.33:通过中=移动指针(连接带)
         if (popup7b.style.display === "none") fail("7b:连接带通过点被误关(走廊保活语义破坏)");
+        // 7c(0.5.33 时间维):带内【静止】指针必关(真机 rig8 定案的用户 bug——移动中通过≠停驻)
+        await hover(rowPng); await new Promise(r => setTimeout(r, 500));
+        const popup7c = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+        popup7c.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 290, clientY: 50 }));  // popup±24 带内点(非通过中)
+        const mm7c = explorerRoot._listeners.get("mousemove");
+        if (mm7c && mm7c.length) mm7c[mm7c.length - 1]({ target: explorerRoot, clientX: 290, clientY: 50 });
+        await new Promise(r => setTimeout(r, 1100));  // 静止 >500ms
+        if (popup7c.style.display !== "none") fail("7c:带内静止指针未关(时间维缺失——用户'移出后一直保持'重演)");
     }
 console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }

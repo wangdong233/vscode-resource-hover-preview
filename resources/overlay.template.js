@@ -19,6 +19,7 @@
     var zoomGeomGrace = 0;   // 0.5.25:复原按钮点击的几何宽限截止时间戳——见 armZoomGeomGrace
     var zoomGeomHold = false;  // 0.5.26:停驻保持——宽限到期时鼠标未动则无限期保持浮窗,由下一次移动裁决(用户语义:点复原后停在原地=不关;"那个位置还有东西"的完整语义)
     var lastMX = -1, lastMY = -1;  // 0.5.26:全局鼠标坐标(document mousemove 记录;hold 裁决"动过没有"的唯一依据)
+    var lastMMoveTs = 0;  // 0.5.33:最近一次指针移动时间戳——走廊"通过性"的时间维判定(静止≠通过中)
     var ZOOM_MAX = 1000, ZOOM_K = 0.0022, ZOOM_K_PINCH = 0.01, ZOOM_STEP_PINCH = 0.336, ZOOM_DY_MAX = 200;  // 0.5.22:ZOOM_MAX 8→1000(用户决策解除放大上限;千倍=浮点安全护栏,ln1000/ln1.3≈26 格到顶(dy=120 计),实际无限制)。滚轮一格×1.30;0.5.25:PINCH 0.0015→0.01(用户实测捏合不跟手——mac 捏合合成 wheel 事件 dy 极小(±1~8/次)高频,低增益=迟滞;Excalidraw 同手势 /100=0.01 同量级)+STEP_PINCH 封顶 0.336(=ln1.4≈1.4×/event,防真鼠标 ctrl+滚轮一格 dy=120 跳 e^1.2≈3.3×;触控板 dy 小恒不触顶=全增益);单事件 dy 封顶±200
     var currentHovered = null;
     var lastRenderedItem = null;  // 已渲染项（防同项 re-hover 重 fetch 闪烁，审查 3.1）
@@ -274,8 +275,8 @@
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
             ".mp-fname{position:absolute;top:-24px;left:0;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
-            ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.62);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
-            "#mp-popup:hover .mp-rail{opacity:1;transform:translate(100%,0) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap spring 入场
+            ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.62);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
+            "#mp-popup:hover .mp-rail{pointer-events:auto;opacity:1;transform:translate(100%,0) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap spring 入场
             "#mp-popup.rail-left .mp-rail{top:6px;right:auto;left:0;transform:translate(-12%,0) scale(.92)}",
             "#mp-popup.rail-left:hover .mp-rail{transform:translate(-100%,0) scale(1)}",
             ".mp-rail button{width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:0;border-radius:6px;transition:background-color 100ms ease-out,color 100ms ease-out,transform 100ms cubic-bezier(.34,1.56,.64,1)}",  // 28×28 等比例触控区，SVG 矢量图标（currentColor）
@@ -574,6 +575,7 @@
             if (!item) {
                 // 鼠标离开文件项区域 → 计划隐藏
                 if (currentHovered && !isPinned) {
+                    if (hoverTimer) clearTimeout(hoverTimer);  // 0.5.33 H3:清迟到幽灵重渲染(快速划过行 N 后 300ms 内停空白,hoverTimer 曾仍触发把浮窗为划过的行重摆位——与 root mouseleave 对称)
                     if (hideTimer) clearTimeout(hideTimer);
                     hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2:工厂收敛
                 }
@@ -601,8 +603,9 @@
     // 守卫序:pin/pan/宽限让位 → 指针回 popup 不关 → 走廊内 250ms 重挂 → 真关才清 currentHovered。
     function armHideChain() {
         return function chain() {
-            if (isPinned || isPanning || Date.now() < zoomGeomGrace) return;
-            if (isMouseInPopup()) return;  // 0.5.31 B3:原 leaveHide 链缺此检(靠 mouseenter 清 timer 耦合救下),统一补齐
+            if (isPinned) return;  // pin=锁定不关(设计语义,唯一合法裸 return)
+            if (isPanning || Date.now() < zoomGeomGrace || zoomGeomHold || isMouseInPopup()) { hideTimer = setTimeout(chain, 250); return; }  // 0.5.33:暂态让位改短周期复查(对抗审 H2:裸 return=死端);+zoomGeomHold(0.5.26 停驻保持——链重挂后必须继续尊重,否则宽限一过就击杀停驻语义)
+
             if (inTransitCorridor()) { hideTimer = setTimeout(chain, 250); return; }
             hidePopup(); currentHovered = null;
         };
@@ -616,6 +619,7 @@
     // 正交轴取两矩形重叠区±24)。指针(150,320) 对该几何在舱外→关;通过点(310,28) 在连接带内→保活。
     function inTransitCorridor() {
         if (lastMX < 0) return false;
+        if (Date.now() - lastMMoveTs > 500) return false;  // 0.5.33 🔴:静止超时——真机 rig8 定案:指针停在带内(浮窗±24/邻行带)"一直保持"=用户实测 bug。通过性语义=移动中才通过(时间维),静止>500ms 按标准悬停语义关闭;慢速移动到控件条(连续位移)不受影响
         var p = document.getElementById("mp-popup");
         if (!p || p.style.display === "none") return false;
         var r = p.getBoundingClientRect(), E = 24;
@@ -1083,7 +1087,7 @@
     //   capture 保证先于 explorer root 处理器跑(移动到源行场景:先排 hideTimer,root 行处理器随即清之,零竞态)。
     document.addEventListener("mouseleave", function () { lastMX = -1; lastMY = -1; });  // 0.5.31 B6:指针出窗→视为离走廊/离 hold(否则 lastMX 冻结在走廊内,250ms 链无限续;回窗 mousemove 即恢复)
     document.addEventListener("mousemove", function (e) {
-        lastMX = e.clientX; lastMY = e.clientY;
+        lastMX = e.clientX; lastMY = e.clientY; lastMMoveTs = Date.now();
         if (!zoomGeomHold) return;
         zoomGeomHold = false;
         if (!isMouseInPopup() && !isPinned && !isPanning) {

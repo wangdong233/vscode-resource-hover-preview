@@ -52,7 +52,7 @@ if (!/var isPanning = false;/.test(ov)) fail("isPanning 模块 var 缺失(pan �
 if (!/tagName === "IMG" && e\.target\._mpZoom && e\.target\._mpZoom\.s > 1/.test(ov)) fail("pan 触发条件缺失(target=IMG 且 s>1,优先于 pin 拖浮窗)");
 if (!/pimg\.setPointerCapture/.test(ov) || !/is-panning/.test(ov)) fail("pan 须 setPointerCapture + is-panning 类(光标+出窗收事件)");
 const panGuards = (ov.match(/&& !isPanning/g) || []).length;
-if (!/if \(isPinned \|\| isPanning \|\| Date\.now\(\) < zoomGeomGrace\) return;/.test(ov)) fail("0.5.31 F2:hide 裁决工厂守卫序破坏(pin/pan/宽限让位须在同一链内单点)");
+if (!/if \(isPinned\) return;/.test(ov) || !/if \(isPanning \|\| Date\.now\(\) < zoomGeomGrace \|\| zoomGeomHold \|\| isMouseInPopup\(\)\) \{ hideTimer = setTimeout\(chain, 250\); return; \}/.test(ov)) fail("0.5.33:链守卫序破坏——pin 裸 return(设计)+暂态(pan/grace/hold/在窗内)必须短周期复查非死端(对抗审 H2 死端曾永卡;0.5.26 停驻保持亦须链内尊重)");
 if (!/isDragging \|\| isPanning/.test(ov)) fail("root mousemove/wheel 守卫须含 isPanning");
 if (!/mp-gap2/.test(ov) || !/mp-zoomreset/.test(ov)) fail("rail 须含 gap2 间隔 + 缩放复原按钮(独立分组)");
 if (!/zoomBtnEl\.style\.display = z\.s > 1 \? "flex" : "none"/.test(ov)) fail("复原按钮可见性须随 s>1 联动(applyImgZoom)");
@@ -73,6 +73,9 @@ if (!/mp-mb-noaudio/.test(ov) || !/markNoAudio/.test(ov)) fail("0.5.32:无音轨
 if (!(ov.indexOf("content.replaceChildren.apply(content, kids);") < ov.indexOf("if (twin && twin._mpDead) markNoAudio();"))) fail("0.5.32b 终验V2:settle 补查必须在 bar 入 DOM 之后(原在插入前=querySelector 恒空死代码)");
 if (!(ov.indexOf('if (ep !== renderEpoch) return;  // 0.5.32b 终验 V4') < ov.indexOf("markNoAudio();  // 0.5.32:提取失败"))) fail("0.5.32b 终验V4:twin error 的 markNoAudio 须在 epoch 守卫内(陈旧 twin 迟到 error 误标当前 bar)");
 if (!/var activeTwin = null;/.test(ov) || !/activeTwin = twin;/.test(ov)) fail("0.5.32b 终验:离屏 twin 模块引用缺失(hidePopup 早于 settle 时 /audio 孤儿拉取)");
+if (!/Date\.now\(\) - lastMMoveTs > 500/.test(ov) || !/lastMMoveTs = Date\.now\(\);/.test(ov)) fail("0.5.33:走廊静止超时缺失(真机 rig8 定案:停带内=永卡——通过性须时间维判定,静止>500ms 即关)");
+if (!/\.mp-rail\{[^}]*pointer-events:none/.test(ov) || !/#mp-popup:hover \.mp-rail\{pointer-events:auto/.test(ov)) fail("0.5.33 H2:隐形 rail 须 pointer-events:none(仅 popup 悬停态开放)——曾停在隐形轨道区=永卡");
+if (!ov.includes("if (hoverTimer) clearTimeout(hoverTimer);  // 0.5.33 H3")) fail("0.5.33 H3:!item 分支须清 hoverTimer(迟到幽灵重渲染,与 root mouseleave 对称)");
 if (!/zoomGeomHold = true; return;/.test(ov)) fail("宽限到期鼠标未动须进入 hold 停驻保持(0.5.26 用户语义:点复原停在原地=不关),而非直接关");
 if (!/if \(!zoomGeomHold\) return;/.test(ov) || !/lastMX = e\.clientX; lastMY = e\.clientY;/.test(ov)) fail("须有 document mousemove 跟踪器(全局坐标记录+hold 首帧移动裁决——死区内无既有监听可达,必须 document 级)");
 
