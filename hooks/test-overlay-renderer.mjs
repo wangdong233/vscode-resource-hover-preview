@@ -285,6 +285,18 @@ async function scenario() {
         await new Promise(r => setTimeout(r, 1100));  // 静止 >500ms
         if (popup7c.style.display !== "none") fail("7c:带内静止指针未关(时间维缺失——用户'移出后一直保持'重演)");
     }
+    // --- 场景8(0.5.35):持续移动中必关——防抖重置行为锚 ---
+    await hover(rowPng);
+    const popup8 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    const mm8 = explorerRoot._listeners.get("mousemove");
+    const t8 = Date.now();
+    while (Date.now() - t8 < 600 && popup8.style.display !== "none") {
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 1500, clientY: 800 + (Date.now() % 2 ? 1 : -1) }));
+        if (mm8 && mm8.length) mm8[mm8.length - 1]({ target: explorerRoot, clientX: 1500, clientY: 800 + (Date.now() % 2 ? 1 : -1) });
+        await new Promise(r => setTimeout(r, 80));
+    }
+    if (popup8.style.display !== "none") fail("8:持续移动中未关(防抖重置回归——关闭被推迟到停手后)");
+    if (Date.now() - t8 > 500) fail("8:关闭过慢(" + (Date.now() - t8) + "ms,应≈200+泵周期;防抖残留在拖)");
 console.log("    场景: mp-mb play/pause 驱动 + mute 手势解静音 + seek 写入 ✓");
 }
 

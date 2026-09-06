@@ -1,7 +1,7 @@
 {
   "name": "vscode-resource-hover-preview-companion",
   "displayName": "Resource Hover Preview",
-  "version": "0.5.34",
+  "version": "0.5.35",
   "publisher": "wangdong",
   "repository": {
     "type": "git",

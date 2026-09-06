@@ -73,6 +73,7 @@ if (!/mp-mb-noaudio/.test(ov) || !/markNoAudio/.test(ov)) fail("0.5.32:无音轨
 if (!(ov.indexOf("content.replaceChildren.apply(content, kids);") < ov.indexOf("if (twin && twin._mpDead) markNoAudio();"))) fail("0.5.32b 终验V2:settle 补查必须在 bar 入 DOM 之后(原在插入前=querySelector 恒空死代码)");
 if (!(ov.indexOf('if (ep !== renderEpoch) return;  // 0.5.32b 终验 V4') < ov.indexOf("markNoAudio();  // 0.5.32:提取失败"))) fail("0.5.32b 终验V4:twin error 的 markNoAudio 须在 epoch 守卫内(陈旧 twin 迟到 error 误标当前 bar)");
 if (!/var activeTwin = null;/.test(ov) || !/activeTwin = twin;/.test(ov)) fail("0.5.32b 终验:离屏 twin 模块引用缺失(hidePopup 早于 settle 时 /audio 孤儿拉取)");
+if (!/if \(!hideTimer\) hideTimer = setTimeout\(armHideChain\(\), hideDelayMs\(\)\);/.test(ov) || !/function disarmHide\(\)/.test(ov)) fail("0.5.35:离开行须单次布防(!hideTimer 判)+disarmHide 置 null 单点(原每次 mousemove 清+重起=防抖重置,手微动永重置→停手后才关=用户延迟感)");
 if (/inBand\(r\)/.test(ov)) fail("0.5.34:走廊禁含浮窗裙带 inBand(r)(离开浮窗必穿裙带→250ms×N 重挂=迟钝关,用户实测灵敏度回归);走廊=源行带+连接带,浮窗本体归 :hover");
 if (!/Date\.now\(\) - lastMMoveTs > 500/.test(ov) || !/lastMMoveTs = Date\.now\(\);/.test(ov)) fail("0.5.33:走廊静止超时缺失(真机 rig8 定案:停带内=永卡——通过性须时间维判定,静止>500ms 即关)");
 if (!/\.mp-rail\{[^}]*pointer-events:none/.test(ov) || !/#mp-popup:hover \.mp-rail\{pointer-events:auto/.test(ov)) fail("0.5.33 H2:隐形 rail 须 pointer-events:none(仅 popup 悬停态开放)——曾停在隐形轨道区=永卡");

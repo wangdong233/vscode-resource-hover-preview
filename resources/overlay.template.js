@@ -37,6 +37,7 @@
     var CACHE_MAX = 24, CACHE_BYTES_MAX = 60 * 1024 * 1024;  // 24 项 / 60MB（单驱逐点协调，审查 §1.6 项6）
     var hoverTimer = null;
     var hideTimer = null;
+    function disarmHide() { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } }  // 0.5.35:清+置 null 单点(!item 布防判 !hideTimer,残留 id 会漏布防)
     // v0.2-v0.5审查🟡：disposeActiveRenderer 按 type 路由（防 font/pdf/3d 资源累积）
     var activeRendererType = null;
     var activeFontFace = null;
@@ -472,7 +473,7 @@
         resetBtn.addEventListener("click", function (e) { e.stopPropagation(); armZoomGeomGrace(); try { localStorage.removeItem("mp.popupSize." + (activeRendererType || "default")); } catch (e2) {} resetToDefaultSize(); });  // 0.5.11:清保存尺寸 + 按内容 natural 恢复(原固定 400×300 不匹配图比例→上下留白);0.5.25:+几何宽限(窗被手动放大过时,回 natural 使 rail 随右缘左移出光标→同族误关)
         closeBtn.addEventListener("click", function (e) { e.stopPropagation(); if (activeRenameDone) activeRenameDone(false); stopDrag(); stopPan(); isPinned = false; pinBtn.classList.remove("is-pinned"); popup.classList.remove("is-pinned"); currentHovered = null; lastRenderedItem = null; hidePopup(); });  // 0.5.13复审 H-2:走 stopDrag() 单一清理点(R-INT-07,原手动逐字段清是唯一例外,未来加 Esc/auto-hide 路径会放大);🔵 改名中途关闭先 done(false) 取消
         // popup 在 document.body（不在 .explorer-viewlet 子树），root 事件收不到 popup 上的进出 → popup 自管
-        popup.addEventListener("mouseenter", function () { if (hideTimer) clearTimeout(hideTimer); if (hoverTimer) clearTimeout(hoverTimer); });  // 0.5.12🟡修:进 popup 也清 hoverTimer(否则 300ms 内首次 hover 的 hoverTimer 仍触发 handleHover 重渲染,刷掉用户正要点的按钮)
+        popup.addEventListener("mouseenter", function () { disarmHide(); if (hoverTimer) clearTimeout(hoverTimer); });  // 0.5.12🟡修:进 popup 也清 hoverTimer(否则 300ms 内首次 hover 的 hoverTimer 仍触发 handleHover 重渲染,刷掉用户正要点的按钮)
         popup.addEventListener("mouseleave", function () {  // 离开 popup → 计划关闭
             if (!isPinned) {
                 if (hideTimer) clearTimeout(hideTimer);
@@ -575,16 +576,16 @@
             if (!item) {
                 // 鼠标离开文件项区域 → 计划隐藏
                 if (currentHovered && !isPinned) {
-                    if (hoverTimer) clearTimeout(hoverTimer);  // 0.5.33 H3:清迟到幽灵重渲染(快速划过行 N 后 300ms 内停空白,hoverTimer 曾仍触发把浮窗为划过的行重摆位——与 root mouseleave 对称)
-                    if (hideTimer) clearTimeout(hideTimer);
-                    hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2:工厂收敛
+                    if (hoverTimer) clearTimeout(hoverTimer);  // 0.5.33 H3:清迟到幽灵重渲染
+                    if (!hideTimer) hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.35:去防抖重置——原每次 mousemove 清+重起 200ms,手在动(触控板微移)就永远重置→"停手后+200ms"才关=用户实测延迟感;离开行 200ms 后必裁一次,通过保护归走廊(空间+移动判定),两套保护职责曾重复
                 }
                 return;
             }
-            if (item === currentHovered) { if (hideTimer) clearTimeout(hideTimer); return; }  // 同一行不重复（去重）+ 取消 popup-mouseleave 设的 hideTimer（防 round-trip 闪烁）
+            if (item === currentHovered) { disarmHide(); return; }  // 同一行不重复(去重)+ 撤隐藏计划(防 round-trip 闪烁);0.5.35:disarmHide 置 null(!item 布防判 !hideTimer)
             currentHovered = item;
             if (hoverTimer) clearTimeout(hoverTimer);
             if (hideTimer) clearTimeout(hideTimer);  // 进入新行取消隐藏计划
+            disarmHide();  // 0.5.35:进新行撤隐藏计划(原 clearTimeout 残留 id → !item 漏布防)
             var rect = item.getBoundingClientRect();
             hoverTimer = setTimeout(function () { if (currentHovered === item) handleHover(item, rect); }, HOVER_DELAY);
         }, true);
@@ -592,8 +593,8 @@
         root.addEventListener("mouseleave", function () {
             if (currentHovered && !isPinned) {
                 if (hoverTimer) clearTimeout(hoverTimer);
-                if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2
+                disarmHide();
+                hideTimer = setTimeout(armHideChain(), hideDelayMs());  // 0.5.31 F2(root mouseleave 兜底,重挂无害)
             }
         });
     }
@@ -607,7 +608,7 @@
             if (isPanning || Date.now() < zoomGeomGrace || zoomGeomHold || isMouseInPopup()) { hideTimer = setTimeout(chain, 250); return; }  // 0.5.33:暂态让位改短周期复查(对抗审 H2:裸 return=死端);+zoomGeomHold(0.5.26 停驻保持——链重挂后必须继续尊重,否则宽限一过就击杀停驻语义)
 
             if (inTransitCorridor()) { hideTimer = setTimeout(chain, 250); return; }
-            hidePopup(); currentHovered = null;
+            hidePopup(); currentHovered = null; hideTimer = null;  // 0.5.35:终态清引用(!item 再布防判 !hideTimer)
         };
     }
     // 0.5.29 走廊守卫:指针在 popup 与源文件行之间的缓冲走廊(各向外扩 24px 的包围盒)→ 不关浮窗,250ms 后再查。
