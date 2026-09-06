@@ -170,6 +170,33 @@ async function scenario() {
             if (popup3.style.display !== "none") fail("hold 后移动到死区未关(移动裁决失效:死悬窗)");
         }
     }
+
+    // --- 场景3b(0.5.36 adv-verify M2 行为锚):宽限到期"动过"须复检真实 :hover 定去留(保活方向) ---
+    //    M2 突变(删 currentHovered.matches(":hover") 复检)曾全绿——到期动过+源行仍悬停→误关而闸门无察。
+    //    隔离设计:全程不派发任何 mouseleave(裁决点=唯一到期 handler);先证保活(行 _hover 注入),
+    //    再证负向(全无 :hover 到期必关)——双向锚防"到期 handler 根本没跑"的空转绿。
+    await hover(rowPng);
+    await new Promise(r => setTimeout(r, 450));
+    const popup3b = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+    const img3b = popup3b && popup3b._qs(popup3b, ".mp-content img");
+    if (!img3b) fail("场景3b: img 缺失(前置渲染未留)");
+    else {
+        popup3b.dispatch("wheel", { deltaY: -120, deltaMode: 0, ctrlKey: false, clientX: 150, clientY: 150, target: img3b, preventDefault() {} });
+        const zb3b = popup3b._qsa(popup3b, "button").find(b => b.className.includes("mp-zoomreset"));
+        if (!zb3b) fail("场景3b: zoomreset 按钮未建");
+        else {
+            zb3b.dispatch("click", { stopPropagation() {} });   // 武装宽限(arm 坐标=此刻 lastM)
+            popup3b._hover = false; rowPng._hover = true;       // 不在窗内;源行仍悬停(复检保活依据)
+            (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 150, clientY: 150 }));  // 动过(≠arm→复检路)
+            await new Promise(r => setTimeout(r, 780));         // 过到期(660)
+            if (popup3b.style.display === "none") fail("3b 保活:到期复检忽略源行 :hover——动过+仍悬停被误关(verify M2 突变曾存活)");
+            rowPng._hover = false;                              // 反向:全无 :hover →到期必关(证 handler 真跑,非空转)
+            zb3b.dispatch("click", { stopPropagation() {} });   // 再武装
+            (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 151, clientY: 151 }));
+            await new Promise(r => setTimeout(r, 780));
+            if (popup3b.style.display !== "none") fail("3b 关闭:全无 :hover 到期未关(复检负向失效)");
+        }
+    }
     console.log("    场景: image hover→close 不抛且隐藏 ✓ / audio→image dispose pause+断src ✓ / fetch " + fetchLog.length + " 次 / 复原宽限+停驻保持→移动才关 ✓");
 
     // --- 场景4(0.5.29 核心):原生基底 + mixer 双元素同步 + 走廊守卫 ---
@@ -270,6 +297,7 @@ async function scenario() {
         await hover(rowPng); await new Promise(r => setTimeout(r, 500));
         const popup7b = byId.get("mp-popup") || body._qs(body, "#mp-popup");
         popup7b.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        rowPng.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 22, width: 300, height: 22 });  // 0.5.36:显式行 rect(消 7a 泄漏耦合)
         (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 310, clientY: 28 }));
         const mm7b = explorerRoot._listeners.get("mousemove");
         if (mm7b && mm7b.length) mm7b[mm7b.length - 1]({ target: explorerRoot, clientX: 310, clientY: 28 });
@@ -279,11 +307,44 @@ async function scenario() {
         await hover(rowPng); await new Promise(r => setTimeout(r, 500));
         const popup7c = byId.get("mp-popup") || body._qs(body, "#mp-popup");
         popup7c.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
-        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 290, clientY: 50 }));  // popup±24 带内点(非通过中)
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 290, clientY: 50 }));  // 垂直连接带内点(290,50:行带 y>46 外/横连带 y>46 外/竖连带 xOv[288,324]×yGap[-2,58] 内)
         const mm7c = explorerRoot._listeners.get("mousemove");
         if (mm7c && mm7c.length) mm7c[mm7c.length - 1]({ target: explorerRoot, clientX: 290, clientY: 50 });
         await new Promise(r => setTimeout(r, 1100));  // 静止 >500ms
         if (popup7c.style.display !== "none") fail("7c:带内静止指针未关(时间维缺失——用户'移出后一直保持'重演)");
+        // 7d(0.5.36 裙带行为锚):浮窗裙带区持续移动必关——(730,300) 在 popup±24 裙内(712+24=736)但行带/连接带皆外;
+        //   裙带或 hull 回归(0.5.32/0.5.34 头条语义)会在此点保活。改名回流(var skirt=r)同样被此行为锚捕获。
+        await hover(rowPng); await new Promise(r => setTimeout(r, 500));
+        const popup7d = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+        rowPng.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 22, width: 300, height: 22 });
+        popup7d.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 730, clientY: 300 }));
+        const mm7d = explorerRoot._listeners.get("mousemove");
+        if (mm7d && mm7d.length) mm7d[mm7d.length - 1]({ target: explorerRoot, clientX: 730, clientY: 300 });
+        await pump(730, 300, 800);  // 持续移动(排除时间维干扰,专测空间几何)
+        if (popup7d.style.display !== "none") fail("7d:裙带/hull 回归——裙带区持续移动仍保活(0.5.34 灵敏度语义被破坏)");
+        // 7e(0.5.36 连接带行为锚):(330,30) 是纯连接带点(x>行带右 324,y<46;横连带[276,336]×[10,46] 内)——移动中必活;
+        //   删除连接带代码(verify M8 幸存者)会在此点误关。
+        await hover(rowPng); await new Promise(r => setTimeout(r, 500));
+        const popup7e = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+        rowPng.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 22, width: 300, height: 22 });
+        popup7e.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 330, clientY: 30 }));
+        const mm7e = explorerRoot._listeners.get("mousemove");
+        if (mm7e && mm7e.length) mm7e[mm7e.length - 1]({ target: explorerRoot, clientX: 330, clientY: 30 });
+        await pump(330, 30, 800);
+        if (popup7e.style.display === "none") fail("7e:连接带失效——纯间隙点移动中被误关(行↔浮窗通过保护破坏=闪烁回归)");
+        // 7f(0.5.36 hull 行为锚):(600,350) 在 hull 包络内(x≤736,y≤358)但三区皆外——持续移动必关;
+        //   hull 回退(verify M5 幸存者)会在此点保活。
+        await hover(rowPng); await new Promise(r => setTimeout(r, 500));
+        const popup7f = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+        rowPng.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 22, width: 300, height: 22 });
+        popup7f.getBoundingClientRect = () => ({ left: 312, top: 34, right: 712, bottom: 334, width: 400, height: 300 });
+        (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 600, clientY: 350 }));
+        const mm7f = explorerRoot._listeners.get("mousemove");
+        if (mm7f && mm7f.length) mm7f[mm7f.length - 1]({ target: explorerRoot, clientX: 600, clientY: 350 });
+        await pump(600, 350, 800);
+        if (popup7f.style.display !== "none") fail("7f:hull 包络回归——包络空白区持续移动仍保活(0.5.32 移出不关重演)");
     }
     // --- 场景8(0.5.35):持续移动中必关——防抖重置行为锚 ---
     await hover(rowPng);

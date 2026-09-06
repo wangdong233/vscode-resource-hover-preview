@@ -581,7 +581,14 @@
                 }
                 return;
             }
-            if (item === currentHovered) { disarmHide(); return; }  // 同一行不重复(去重)+ 撤隐藏计划(防 round-trip 闪烁);0.5.35:disarmHide 置 null(!item 布防判 !hideTimer)
+            if (item === currentHovered) {
+                disarmHide();  // 撤隐藏计划(防 round-trip 闪烁)
+                // 0.5.36 SM🟡-2/3:仅当【该行确已渲染且浮窗可见】才早退。原条件过宽:
+                //   ①摆出行<300ms 摆回(H3 曾清 hoverTimer)→渲染被清永不重排→停驻无预览;
+                //   ②pin 期划过新行(unpin 后停驻)→浮窗显示旧行内容。两条皆 stem 自 dedup 早退早于 lastRenderedItem 检查。
+                if (item === lastRenderedItem) { var ex = document.getElementById("mp-popup"); if (ex && ex.style.display !== "none") return; }
+                if (!hoverTimer) { var r2 = item.getBoundingClientRect(); hoverTimer = setTimeout(function () { if (currentHovered === item) handleHover(item, r2); }, HOVER_DELAY); }
+            }
             currentHovered = item;
             if (hoverTimer) clearTimeout(hoverTimer);
             if (hideTimer) clearTimeout(hideTimer);  // 进入新行取消隐藏计划
@@ -604,7 +611,7 @@
     // 守卫序:pin/pan/宽限让位 → 指针回 popup 不关 → 走廊内 250ms 重挂 → 真关才清 currentHovered。
     function armHideChain() {
         return function chain() {
-            if (isPinned) return;  // pin=锁定不关(设计语义,唯一合法裸 return)
+            if (isPinned) { hideTimer = null; return; }  // pin=锁定不关(设计);0.5.36 SM🟡-1:须置 null——残留死 id 会让 !item 的 !hideTimer 判永不布防(键盘 pin/unpin 通路曾永开)
             if (isPanning || Date.now() < zoomGeomGrace || zoomGeomHold || isMouseInPopup()) { hideTimer = setTimeout(chain, 250); return; }  // 0.5.33:暂态让位改短周期复查(对抗审 H2:裸 return=死端);+zoomGeomHold(0.5.26 停驻保持——链重挂后必须继续尊重,否则宽限一过就击杀停驻语义)
 
             if (inTransitCorridor()) { hideTimer = setTimeout(chain, 250); return; }
