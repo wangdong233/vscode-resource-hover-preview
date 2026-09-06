@@ -243,16 +243,16 @@ async function scenario() {
         (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 60, clientY: 60 }));
         await new Promise(r => setTimeout(r, 800));  // hold 裁决→带外→关
     }
-    // 6c 音频隐藏分型:移开后 250ms 不关(媒体档 400ms),700ms 已关
+    // 6c(0.5.34 统一 200ms):移开→350ms 内必关(灵敏度行为锚;旧裙带+媒体 400 曾 650ms+)
     await hover(rowMp3);
     const popup6c = byId.get("mp-popup") || body._qs(body, "#mp-popup");
     (docLs.get("mousemove") || []).slice().forEach(fn => fn({ clientX: 1500, clientY: 1500 }));
     const mm6 = explorerRoot._listeners.get("mousemove");
     if (mm6 && mm6.length) mm6[mm6.length - 1]({ target: explorerRoot, clientX: 1500, clientY: 1500 });
-    await new Promise(r => setTimeout(r, 250));
-    if (popup6c.style.display === "none") fail("6c:音频弹窗 250ms 即关(媒体档 400ms 分型失效)");
+    await new Promise(r => setTimeout(r, 350));
+    if (popup6c.style.display !== "none") fail("6c:音频弹窗 350ms 未关(0.5.34 统一 200ms 灵敏度——裙带重挂或媒体 400 回流)");
     await new Promise(r => setTimeout(r, 450));
-    if (popup6c.style.display !== "none") fail("6c:音频弹窗 700ms 未关(死悬窗)");
+    if (popup6c.style.display !== "none") fail("6c:音频弹窗 750ms 仍未关(死悬窗)");
 
     // --- 场景7(0.5.32 🔴 用户实测回归):走廊外接包络巨舱——行下方包络内点必须关 ---
     // 0.5.29-0.5.31 走廊=两矩形外接包络(行0..300,0..22+popup312..712,34..334→760×382 巨舱),指针停舱内→250ms 链无限

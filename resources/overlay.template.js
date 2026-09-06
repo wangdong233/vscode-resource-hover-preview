@@ -10,8 +10,8 @@
     if (cfg.enabled === false) { console.log("[mp-overlay] disabled（resource-hover-preview.enabled=false）"); return; }  // 运行时开关(2.4)：=== false 避免未定义误关
     var SERVER_BASE = "http://127.0.0.1:" + cfg.port;
     var TOKEN = cfg.token;
-    var HOVER_DELAY = 300, HIDE_DELAY = 200, MEDIA_HIDE_DELAY = 400;  // 0.5.20(S2/S5):视频/音频弹窗隐藏延时加长——用户从 explorer 移向底部音量控件需跨 popup 主体,200ms 窗太紧
-    function hideDelayMs() { return (activeRendererType === "video" || activeRendererType === "audio") ? MEDIA_HIDE_DELAY : HIDE_DELAY; }
+    var HOVER_DELAY = 300, HIDE_DELAY = 200;  // 0.5.34:统一 200(0.5.20 媒体 400ms 是前走廊时代防"移向控件条击穿"的补丁,走廊(连接带+移动中判定)已覆盖该场景;用户裁决灵敏度回归)
+    function hideDelayMs() { return HIDE_DELAY; }
     var isPinned = false;
     var isDragging = false;  // 0.5.13: pin 态浮窗拖动中标志(root mousemove 早退防 currentHovered 漂移 + pinBtn unpin 强制终止用)
     var isPanning = false;   // 0.5.22: 缩放图平移中标志(三处 hideTimer fire-time 守卫防 pan 中弹窗被销毁 + root mousemove/wheel 让出)
@@ -626,7 +626,7 @@
         var c = null;
         if (currentHovered && currentHovered.getBoundingClientRect) { try { c = currentHovered.getBoundingClientRect(); } catch (e2) {} }
         var inBand = function (q) { return q && lastMX >= q.left - E && lastMX <= q.right + E && lastMY >= q.top - E && lastMY <= q.bottom + E; };
-        if (inBand(r) || inBand(c)) return true;
+        if (inBand(c)) return true;  // 0.5.34:仅源行带(浮窗±24 裙边已删——离开浮窗必穿裙带→走廊重挂 250ms×N=迟钝关,用户实测"不如以前灵敏";浮窗本体由 :hover 承担,行↔浮窗通过由连接带承担)
         if (!c) return false;
         var xGap = r.right < c.left ? [r.right - E, c.left + E] : (c.right < r.left ? [c.right - E, r.left + E] : null);
         var yOv = [Math.max(r.top, c.top) - E, Math.min(r.bottom, c.bottom) + E];

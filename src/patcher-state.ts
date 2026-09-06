@@ -1,5 +1,5 @@
 // patch 状态机 + 注入标记常量。详见 doc/01_自愈patch机制设计.md
-export const INJECT_VERSION = "v0.29.5"; // bump:0.5.33 移出不关终修——走廊时间维(静止>500ms 必关,真机 rig8 定案)+链死端消灭(暂态改短周期复查,含 hold 尊重)+隐形 rail pointer-events:none+!item 清 hoverTimer(H3 幽灵重渲染)
+export const INJECT_VERSION = "v0.29.6"; // bump:0.5.34 关闭灵敏度回归修复——走廊去浮窗裙带(离开必穿裙带=250ms×N 迟钝关)+统一 200ms(媒体 400 是前走廊时代补丁)
 
 // 注入标记块格式：<!--mp-injected:VERSION:HASH--> ... <!--/mp-injected-->
 export const MARKER_BLOCK_CLOSE = "<!--/mp-injected-->";  // 0.5.31 B8:唯一常量(csp.ts 模板+本 RE 均由此构造,原三处字面量分叉)
