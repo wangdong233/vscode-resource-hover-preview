@@ -17,3 +17,4 @@ companion/resources/
 
 # 0.5.25:测试媒体与个人文档不入库(曾因 add -A 卷入致 GH001 大文件拒推;本地保留)
 doc/test/
+.claude/
