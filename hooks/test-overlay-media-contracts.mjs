@@ -75,6 +75,13 @@ if (!(ov.indexOf('if (ep !== renderEpoch) return;  // 0.5.32b 终验 V4') < ov.i
 if (!/var activeTwin = null;/.test(ov) || !/activeTwin = twin;/.test(ov)) fail("0.5.32b 终验:离屏 twin 模块引用缺失(hidePopup 早于 settle 时 /audio 孤儿拉取)");
 if (!/HIDE_DELAY = 200/.test(ov)) fail("0.5.36(verify M7):HIDE_DELAY 须 200(数值钉;回归 300 曾全绿——灵敏度数值无闸)");
 if (!/if \(isPinned\) \{ hideTimer = null; return; \}/.test(ov)) fail("0.5.36(SM🟡-1):pin 分支须置 null(残留死 id × !hideTimer 布防=键盘通路永开)");
+// 0.5.37 🔴拖进度条冻结契约(用户实测:拖到最开头后进度条不动;Playwright 真机复现=焦点恒留 range)
+if (/document\.activeElement/.test(ov)) fail("0.5.37:bar 更新禁 activeElement 焦点推断——拖拽使 range 得焦且松手不 blur(Playwright 实证),焦点恒留→timeupdate 永不覆写=进度条冻结;业界三库(video.js/plyr/media-chrome)皆显式拖拽态,须 owned 状态勿耦合全局环境");
+if (!/var scrubbing = false, lastSeekTs = 0;/.test(ov)) fail("0.5.37:seek 须显式 scrubbing 闩锁+lastSeekTs 输入时间戳(闩锁扛拖中静止;去抖扛键盘按住修磨)");
+if (!/var seekEnd = function \(\) \{ if \(!scrubbing\) return; scrubbing = false; sync\(\); \};/.test(ov)) fail("0.5.37:seekEnd 复位须幂等守卫+立即重同步(拇指取整千分位 vs 媒体钳位 ε 脱节)");
+if (!/seek\.addEventListener\("change", seekEnd\);/.test(ov) || !/seek\.addEventListener\("blur", seekEnd\); seek\.addEventListener\("pointerup", seekEnd\); seek\.addEventListener\("pointercancel", seekEnd\);/.test(ov)) fail("0.5.37:seek 复位须四通道(change/blur/pointerup/pointercancel)——change 有拖回原值不发的 spec 级丢失路径,单点信任=冻结复发");
+if (!/if \(!scrubbing && Date\.now\(\) - lastSeekTs > 150\) seek\.value/.test(ov)) fail("0.5.37:sync 守卫须 !scrubbing+150ms 去抖双条件");
+if (!/var volScrub = false, lastVolTs = 0;/.test(ov) || !/var volEnd = function \(\) \{ volScrub = false; \};/.test(ov) || !/vol\.addEventListener\("pointerup", volEnd\); vol\.addEventListener\("pointercancel", volEnd\);/.test(ov) || !/if \(!volScrub && Date\.now\(\) - lastVolTs > 150\) vol\.value/.test(ov)) fail("0.5.37:vol 滑条须同款显式态+四通道复位(mute 按钮改音量后滑条须跟随,原焦点推断同族冻结)");
 if (!/if \(!hideTimer\) hideTimer = setTimeout\(armHideChain\(\), hideDelayMs\(\)\);/.test(ov) || !/function disarmHide\(\)/.test(ov)) fail("0.5.35:离开行须单次布防(!hideTimer 判)+disarmHide 置 null 单点(原每次 mousemove 清+重起=防抖重置,手微动永重置→停手后才关=用户延迟感)");
 if (/inBand\(r\)/.test(ov)) fail("0.5.34:走廊禁含浮窗裙带 inBand(r)(离开浮窗必穿裙带→250ms×N 重挂=迟钝关,用户实测灵敏度回归);走廊=源行带+连接带,浮窗本体归 :hover");
 if (!/Date\.now\(\) - lastMMoveTs > 500/.test(ov) || !/lastMMoveTs = Date\.now\(\);/.test(ov)) fail("0.5.33:走廊静止超时缺失(真机 rig8 定案:停带内=永卡——通过性须时间维判定,静止>500ms 即关)");

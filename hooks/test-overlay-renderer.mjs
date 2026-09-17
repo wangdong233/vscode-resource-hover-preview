@@ -69,6 +69,7 @@ const mkDoc = () => ({
     querySelectorAll: sel => body._qsa(body, sel),
     body, head: new El("head"),
     fonts: { add() {}, delete() {} },
+    activeElement: null,  // 0.5.37:可注入焦点(场景4b 复现"拖后焦点恒留"真机失败模式;原桩缺此属性→旧 activeElement 守卫在桩里恒过=空转绿)
 });
 let explorerRoot = null;
 
@@ -77,6 +78,7 @@ async function scenario() {
     const popupLogs = [];
     const storage = new Map();
     const fetchLog = [];
+    const vmDoc = mkDoc();  // 0.5.37:保留引用供场景 4b 注入 activeElement(复现拖后焦点恒留)
     const sandbox = {
         console: { log: () => {}, warn: (...a) => popupLogs.push(a.join(" ")), error: () => {} },
         setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(cb, 0), cancelAnimationFrame: id => clearTimeout(id),
@@ -86,7 +88,7 @@ async function scenario() {
                 json: () => Promise.resolve({ type: "image", mime: "image/png", base64: "aGk=", sizeBytes: 2 }),
                 arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)), body: { cancel() {} } }); },
         localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
-        document: mkDoc(),
+        document: vmDoc,
         window: { innerWidth: 1920, innerHeight: 1080 },
         navigator: {},  // 0.5.28:探测已删,AAC 家族恒路由——无需桩
     };
@@ -232,6 +234,39 @@ async function scenario() {
                 if (Math.abs(twin4.currentTime - 25) > 0.01) fail("mixer 漂移校正失效(twin=" + twin4.currentTime + " 应回 25)");
                 twin4.dispatch("error", {});  // 旁路死 → _mpDead 降级
                 if (twin4._mpDead !== true) fail("twin error 未 _mpDead 降级");
+                // --- 场景4b(0.5.37 🔴用户实测锚):拖进度条后 timeupdate 必须继续跟随 ---
+                // 真机根因:原守卫 document.activeElement!==seek——拖拽使 range 得焦且松手不 blur(Playwright 实证:
+                // 拖后 activeElement 恒=seek,模拟时间推进而 seekValue 冻结)→ timeupdate 永不覆写="拖到最开头后进度条不动"。
+                // 桩曾无 activeElement 属性→旧守卫恒过=空转绿,本锚补真机失败模式+多通道复位语义。
+                bSeek.value = "0"; bSeek.dispatch("input", {});  // 用户拖到最开头(scrubbing 置位)
+                if (vid4.currentTime !== 0) fail("4b 前置:拖到最开头未落 currentTime(实得 " + vid4.currentTime + ")");
+                vid4.currentTime = 5; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "0") fail("4b 拖中保护:input 后未松手,seek 不得被 timeupdate 覆写(实得 " + bSeek.value + ")");
+                await new Promise(r => setTimeout(r, 170));  // 过去抖窗:仍拖中(未发 change)——闩锁是唯一防线(对抗终审🟡-1:杀"删 input 内置位"突变,该突变曾同 tick 逃过两闸)
+                vid4.currentTime = 8; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "0") fail("4b 闩锁独立防线:拖中静止超过去抖窗,seek 仍不得被覆写(实得 " + bSeek.value + "——闩锁置位缺席)");
+                bSeek.dispatch("input", {});  // 新一轮拖拽周期(commit 语义锚用干净 ts)
+                vid4.currentTime = 10; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "0") fail("4b 拖中保护2:新周期 input 后 seek 被覆写(实得 " + bSeek.value + ")");
+                vmDoc.activeElement = bSeek;  // 真机失败模式:松手后焦点恒留 range(旧代码在此之后永久冻结)
+                bSeek.dispatch("change", {});  // 松手提交(seekEnd:解除+立即重同步)
+                vid4.currentTime = 20; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "0") fail("4b 去抖窗:change 后 150ms 输入去抖窗内仍不覆写(键盘修磨保护,实得 " + bSeek.value + ")");
+                await new Promise(r => setTimeout(r, 170));  // 过去抖窗(真机松手后首个 timeupdate≥250ms 本就窗外)
+                vid4.currentTime = 40; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "400") fail("4b 🔴冻结回归:change(松手)+去抖窗外,timeupdate 须恢复覆写(实得 " + bSeek.value + "——焦点遗留下旧 activeElement 推断=永久冻结)");
+                vid4.currentTime = 60; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "600") fail("4b 持续跟随:后续 timeupdate 未继续推进(实得 " + bSeek.value + ")");
+                // 4c:change 丢失路径(HTML spec:拖回原值松手不发 change)→ pointerup 兜底通道
+                bSeek.value = "100"; bSeek.dispatch("input", {});  // 再拖
+                vid4.currentTime = 70; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "100") fail("4c 拖中保护:再拖中 seek 被覆写(实得 " + bSeek.value + ")");
+                bSeek.dispatch("pointerup", {});  // change 不发(spec 级丢失路径)→ 元素级 pointerup 兜底(原生 range 隐式捕获)
+                await new Promise(r => setTimeout(r, 170));
+                vid4.currentTime = 80; vid4.dispatch("timeupdate", {});
+                if (bSeek.value !== "800") fail("4c pointerup 兜底:change 丢失路径后未恢复跟随(实得 " + bSeek.value + ")");
+                bSeek.dispatch("blur", {}); bSeek.dispatch("pointercancel", {});  // 其余兜底通道不抛
+                vmDoc.activeElement = null;
             }
         }
     }

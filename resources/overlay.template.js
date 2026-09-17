@@ -750,13 +750,21 @@
         setMuteIcon();
         mute.addEventListener("click", function () { media.muted = !media.muted; if (!media.muted && media.volume === 0) media.volume = 0.5; setMuteIcon(); });  // 手势内解静音(Chromium:手势外程序解静音会被 autoplay 政策暂停)
         var vol = document.createElement("input"); vol.type = "range"; vol.min = "0"; vol.max = "100"; vol.step = "1"; vol.value = String(Math.round((media.muted ? 0 : media.volume) * 100)); vol.title = "音量"; vol.className = "mp-mb-vol"; vol.style.width = "56px";
-        vol.addEventListener("input", function () { media.volume = parseInt(vol.value, 10) / 100; media.muted = media.volume === 0; setMuteIcon(); });
-        seek.addEventListener("input", function () { if (isFinite(media.duration) && media.duration > 0) media.currentTime = parseInt(seek.value, 10) / 1000 * media.duration; });
+        var volScrub = false, lastVolTs = 0;  // 0.5.37:显式拖拽态+150ms 输入去抖(键盘按住修磨保护)。四通道复位(change/blur/pointerup/pointercancel)——change 有"拖回原值不发"的规范级丢失路径(HTML spec),video.js/plyr/media-chrome 皆多通道兜底
+        vol.addEventListener("input", function () { volScrub = true; lastVolTs = Date.now(); media.volume = parseInt(vol.value, 10) / 100; media.muted = media.volume === 0; setMuteIcon(); });
+        var volEnd = function () { volScrub = false; };
+        vol.addEventListener("change", volEnd); vol.addEventListener("blur", volEnd);
+        vol.addEventListener("pointerup", volEnd); vol.addEventListener("pointercancel", volEnd);  // 原生 range 隐式指针捕获→元素级 pointerup 即窗外释放兜底
+        var scrubbing = false, lastSeekTs = 0;  // 0.5.37 🔴修(用户实测:拖进度到最开头后进度条不动):原守卫以"焦点是否在本元素"推断拖拽中——range 拖后得焦且松手不 blur(Playwright 真机实证),焦点恒留→timeupdate 永不覆写=进度条冻结。显式交互态取代环境焦点推断(02清单:状态须显式 owned);150ms 去抖接棒原焦点守卫兼负的键盘修磨保护(对抗复审🟡-3)。
+        seek.addEventListener("input", function () { scrubbing = true; lastSeekTs = Date.now(); if (isFinite(media.duration) && media.duration > 0) media.currentTime = parseInt(seek.value, 10) / 1000 * media.duration; });
+        var seekEnd = function () { if (!scrubbing) return; scrubbing = false; sync(); };  // 松手/兜底解除闩锁并重同步(time 文本即时;拇指覆写受同款 150ms 去抖节制,两态由下次 timeupdate 收敛——对抗终审🔵-2 注释纠偏)
+        seek.addEventListener("change", seekEnd);  // 主通道(鼠标松手提交;键盘每键 input+change 成对)
+        seek.addEventListener("blur", seekEnd); seek.addEventListener("pointerup", seekEnd); seek.addEventListener("pointercancel", seekEnd);  // 多通道兜底:拖回原值 change 不发(spec)/拖拽中 detach 失焦/系统手势打断
         var sync = function () {
             time.textContent = fmtT(media.currentTime) + " / " + fmtT(media.duration);
             if (isFinite(media.duration) && media.duration > 0) {
                 seek.disabled = false;
-                if (document.activeElement !== seek) seek.value = String(Math.round(media.currentTime / media.duration * 1000));  // 0.5.27d 🟡-1:拖动中不被 timeupdate 覆写(与 vol 同守卫;原缺→拖进度与播放"打架")
+                if (!scrubbing && Date.now() - lastSeekTs > 150) seek.value = String(Math.round(media.currentTime / media.duration * 1000));  // 0.5.27d 🟡-1 拖拽中不被 timeupdate 覆写;0.5.37 改显式 scrubbing 闩锁+150ms 输入去抖(原 activeElement 焦点推断=拖后冻结,用户实测🔴)
             } else seek.disabled = true;  // /transcode fMP4 空_moov 期 duration=Infinity → 禁拖待 durationchange 解锁
             var popN = document.getElementById("mp-popup"), w = popN ? popN.offsetWidth : 400;  // 0.5.27d 🟡-4:窄窗自适应(bar 定宽≈250>min-width 200-20 → 溢出)。<300 藏 time,<250 再藏 vol
             bar.classList.toggle("mp-mb-narrow", w < 300);
@@ -766,7 +774,7 @@
         media.addEventListener("durationchange", sync);
         media.addEventListener("play", setPlayIcon);
         media.addEventListener("pause", setPlayIcon);
-        media.addEventListener("volumechange", function () { setMuteIcon(); if (document.activeElement !== vol) vol.value = String(Math.round((media.muted ? 0 : media.volume) * 100)); });
+        media.addEventListener("volumechange", function () { setMuteIcon(); if (!volScrub && Date.now() - lastVolTs > 150) vol.value = String(Math.round((media.muted ? 0 : media.volume) * 100)); });  // 0.5.37:同 seek 显式态+去抖(mute 按钮改音量后滑条须跟随;原焦点推断同族冻结)
         media.addEventListener("ended", setPlayIcon);
         bar.append(play, time, seek, mute, vol);
         sync();  // 0.5.27d 🔵-2:构造即同步一次(settle 时 metadata 已知,免"禁用态 seek+0:00"闪到首个 timeupdate)
