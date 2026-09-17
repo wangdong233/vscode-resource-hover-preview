@@ -30,6 +30,15 @@ patch VSCode workbench.html（注入静态 `<script>` 加载 overlay IIFE）+ pr
 | 10 | [风险登记册与 Spike 验证](10_风险登记册与spike验证.md) | **make-or-break spike 闸门** + 降级预案 |
 | 11 | [Rejected by Design 清单](11_rejected-by-design清单.md) | 被否决方案/feature + 理由 + 复活条件 |
 
+## 事件根因文档(现行)
+
+- [进度条拖拽冻结-根因与修复-2026-09-17](进度条拖拽冻结-根因与修复-2026-09-17.md) — 0.5.37:activeElement 焦点推断→显式 scrubbing 状态机;业界三库调研;突变矩阵 9/9;真机 CDP 端到端
+
+## 历史归档([archive/](archive/))
+
+- 媒体控件与 AAC 路由根因(2026-09-04,0.5.29 用户裁决:原文件直读+MP3 旁路)
+- 视频声音判别树与 DevTools 探针 / 预览新鲜度真机验收清单(SH08)
+
 ## 快速开始（开发）
 
 1. **先做 [Spike 1-6](10_风险登记册与spike验证.md#一-make-or-break-spike-闸门动工前必须先过)**——这是 make-or-break 验证，全过才进编码。Spike 1/2 是生死点。
