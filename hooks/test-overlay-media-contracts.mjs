@@ -20,7 +20,15 @@ if (/video\.autoplay/.test(ov)) fail("禁 video.autoplay 属性(0.5.20 显式 pl
 const mutedCount = (ov.match(/video\.muted = true/g) || []).length;
 if (mutedCount !== 1) fail(`video.muted = true 应恰 1 处(renderVideo muted 起播),实得 ${mutedCount}`);
 if (/\.controls = true/.test(ov)) fail("禁 media.controls = true(0.5.27:原生 UA 控件=闭影 DOM,VSCode 环境交互死+CDP 不可测——控件面唯一来源须为 mp-mb)");
-if (!/video\.preload = "metadata"/.test(ov)) fail("renderVideo 须 preload=metadata(离屏先取元数据)");
+if (!/video\.preload = NATIVE_VIDEO\.indexOf\(ext\) >= 0 \? "auto" : "metadata";/.test(ov)) fail("0.5.38:preload 须条件式(原生直读=auto 预热首帧缩短透明窗;转码流保持 metadata 防 ffmpeg 前瞻白烧——否定重查 AMEND)");
+// 0.5.38 🔴首帧白闪契约(用户实测:悬停起播头几帧连续闪白):loadedmetadata(rs=1,零解码帧)即插入,首帧前 video 规范级完全透明(Chromium UA 样式表无背景)→透弹窗底
+if (!/video\.style\.opacity = "0";/.test(ov)) fail("0.5.38:video 创建即 opacity:0(首帧揭示闸;禁 display:none=停解码)");
+if (!/var reveal = function \(\) \{ if \(revealed \|\| ep !== renderEpoch \|\| !settled\) return; revealed = true; video\.style\.opacity = "1"; \};/.test(ov)) fail("0.5.38:reveal 须幂等+epoch+settled 三守卫(迟到 reveal 不得触碰已换代的元素)");
+if (!/if \(video\.requestVideoFrameCallback\) video\.requestVideoFrameCallback\(function \(\) \{ reveal\(\); \}\);/.test(ov)) fail("0.5.38:rVFC 主揭示信号须 play 前注册(晚注册漏首帧;唯一『帧已提交合成器』级信号)");
+if (!/video\.addEventListener\("loadeddata", function \(\) \{ requestAnimationFrame\(function \(\) \{ requestAnimationFrame\(reveal\); \}\); \}\);/.test(ov)) fail("0.5.38:loadeddata+双 rAF 次级揭示信号缺失(rVFC 离屏不触发 chromium#40239565 的第一兜底)");
+if (!/setTimeout\(reveal, 500\);/.test(ov)) fail("0.5.38:500ms 揭示兜底缺失(全信号失效=永久透明弹窗)");
+if (!/if \(viaFallback && !video\.videoWidth\) \{/.test(ov) || !/video\.addEventListener\("loadedmetadata", function \(\) \{ if \(ep !== renderEpoch \|\| revealed\) return; if \(!loadPopupSize\(popup, "video"\)\) fitPopupToContent/.test(ov)) fail("0.5.38 D1:兜底默认几何后,晚到 metadata 须在揭示前补正(reveal 推迟可见性→不可见期改几何零跳动;原=永久错误几何)");
+if (!/^    var activeVideo = null;/m.test(ov) || !/^        activeVideo = video;/m.test(ov) || !/^            if \(activeVideo\) \{ try \{ activeVideo\.pause\(\); activeVideo\.removeAttribute\("src"\); activeVideo\.load\(\); \} catch \(eV\) \{\} activeVideo = null; \}/m.test(ov)) fail("0.5.38 D2:离屏未 settle master video 须模块引用切断(镜像 activeTwin;原只清 twin 漏本体=/preview 孤儿拉取;行锚——注释包裹可绕过子串锚,突变 M9 实证)");
 if (!/var settled = false;/.test(ov) || !/settled = true;/.test(ov)) fail("settle latch 缺失(settle-before-show 单次入口契约)");
 if (!/content\.replaceChildren\.apply\(content, kids\);/.test(ov) || !/buildMediaBar\(mixer\)/.test(ov)) fail("video+twin+bar 须同刻插入(kids 数组,bar 绑 mixer;S1)");
 if (!/content\.replaceChildren\(audio, buildMediaBar\(audio\)\);/.test(ov)) fail("audio 须同款 mp-mb(同一组件双消费,原生控件同族死按钮风险)");

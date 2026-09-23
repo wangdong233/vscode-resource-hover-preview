@@ -42,6 +42,7 @@
     var activeRendererType = null;
     var activeFontFace = null;
     var activeTwin = null;  // 0.5.32b 终验:离屏(未 settle)twin 的模块引用——hidePopup 于 settle 前发生时 DOM 查询不可达,须由此切断 /audio 拉取
+    var activeVideo = null;  // 0.5.38 D2:同族——离屏(未 settle)master video 的模块引用(切断 /preview 孤儿拉取;rc-flash 对抗审发现 0.5.32b 只修了 twin 漏了本体)
     // activePdf 移除（0.4.5：PDF 预览删除，用户判定无必要）
 
     // v0.1 图片 + v0.2 视频 + v0.3 音频/字体（overlay *_EXTS ↔ server TYPE_TABLE 一致性由 test-contract-sync per-type 闸门钉）
@@ -554,6 +555,7 @@
         else if (activeRendererType === "font" && activeFontFace) { try { document.fonts.delete(activeFontFace); activeFontFace.unload(); } catch (e) {} activeFontFace = null; }
         else if (activeRendererType === "video" || activeRendererType === "audio") {  // 0.5.24🔴R2修+0.5.29:全部媒体元素(视频+旁路 twin+音频条)逐一 pause+断 src+load(twin 入 DOM,单一清理路径)
             if (activeTwin) { try { activeTwin.pause(); activeTwin.removeAttribute("src"); activeTwin.load(); } catch (eT) {} activeTwin = null; }  // 0.5.32b 终验:settle 前被切走的离屏 twin(DOM 查询不可达)由模块引用切断,防 /audio 孤儿拉取;入 DOM 后同 cut 幂等
+            if (activeVideo) { try { activeVideo.pause(); activeVideo.removeAttribute("src"); activeVideo.load(); } catch (eV) {} activeVideo = null; }  // 0.5.38 D2:离屏未 settle 的 master video 同族切断(防 /preview 孤儿拉取拖慢下次起播;入 DOM 后与下行 DOM 清理幂等)
             var dMeds = document.querySelectorAll("#mp-popup .mp-content video, #mp-popup .mp-content audio");
             for (var di = 0; di < dMeds.length; di++) { try { var p = dMeds[di].pause(); if (p && p.catch) p.catch(function () {}); dMeds[di].removeAttribute("src"); dMeds[di].load(); } catch (e) { /* ignore */ } }
         }
@@ -791,10 +793,12 @@
         var content = popup.querySelector(".mp-content");
         var ext = (filePath.split(".").pop() || "").toLowerCase();
         var video = document.createElement("video");
-        video.preload = "metadata";  // 离屏先取 metadata(本地/流式均早到)
+        video.preload = NATIVE_VIDEO.indexOf(ext) >= 0 ? "auto" : "metadata";  // 0.5.38:原生直读=auto 预热首帧解码缩短透明窗(起播白闪根治之一);转码流(mkv/avi/flv=ffmpeg 管道)保持 metadata——auto 会拉动前瞻转码白烧 CPU(否定重查 AMEND)
         video.src = mediaUrl(filePath, "video");  // 0.5.29 原生基底:mp4/mov/m4v/webm = 原文件 /preview(完整时长/秒拖);mkv/avi/flv = /transcode 流
         video.muted = true; video.playsInline = true;  // muted 起播(autoplay 恒过);AAC 家族永久 muted(makeMixer 保证 unmute 落 twin),webm 家族 unmute 直接落本元素
         video.style.maxWidth = "100%"; video.style.maxHeight = "100%";
+        video.style.opacity = "0";  // 0.5.38 🔴首帧白闪修(用户实测:悬停起播头几帧连续闪白):loadedmetadata(readyState=1,零解码帧)即插入,首帧提交合成器前 video 按规范完全透明(Chromium UA 样式表无背景,WHATWG"represents nothing")→透出弹窗底=用户环境读作白。揭示由 settle 内三重信号触发;用 opacity 不用 display:none(display 停解码)。
+        activeVideo = video;  // 0.5.38 D2:离屏未 settle 的 master video 模块登记(dispose 由引用切断 /preview 孤儿拉取,镜像 activeTwin)
         video.addEventListener("click", function () { if (video.paused) { var p = video.play(); if (p && p.catch) p.catch(function () {}); } else video.pause(); });  // 点击画面切播放(媒体播放器惯例;与 pan/drag 无冲突——video 在 DRAG_SKIP)
         // 0.5.29 音频旁路:AAC 家族(mp4/mov/m4v)建 twin(detached <audio>,离 DOM 可播);提取失败/无音轨 → _mpDead 降级单元素
         var twin = null;
@@ -815,17 +819,26 @@
         var mixer = makeMixer(video, twin);  // twin=null(webm/非原生)时 mixer 退化为单元素直通
         var markNoAudio = function () { var barEl = document.querySelector("#mp-popup .mp-mb"); if (barEl) barEl.classList.add("mp-mb-noaudio"); };  // 0.5.32:无音轨源(如 .work_v.mp4)mute/volume 无实效,隐藏免误导(用户实测困惑)
         var settled = false;
-        var settle = function () {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
+        var settle = function (viaFallback) {  // 唯一"定尺寸→定位→插 DOM→play"入口,latch 保证只跑一次
             if (settled || ep !== renderEpoch) return; settled = true;
             if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect);
             else if (rect) placePopup(rect);
             var kids = [video]; if (twin) kids.push(twin); kids.push(buildMediaBar(mixer));
             content.replaceChildren.apply(content, kids);  // loading 占位此刻一次换掉(video+twin+bar 同刻插入,S1;twin display:none 入 DOM——dispose 单一 DOM 清理路径覆盖)
             if (twin && twin._mpDead) markNoAudio();  // 0.5.32b 终验 V2:补查必须在 bar 入 DOM 之后(原在插入前=querySelector 恒空死代码)
+            // 0.5.38 首帧揭示闸:首帧提交合成器前保持 opacity:0(创建时置),防无帧透明窗透底(用户实测起播白闪根因之一;否定重查:暗色主题下此窗读暗不读白——backdrop-filter 通路另需真机 A/B)。三重信号幂等揭示:
+            var revealed = false;
+            var reveal = function () { if (revealed || ep !== renderEpoch || !settled) return; revealed = true; video.style.opacity = "1"; };
+            if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(function () { reveal(); });  // 主信号:首帧已提交合成器(插入后/play 前注册,不漏首帧)
+            video.addEventListener("loadeddata", function () { requestAnimationFrame(function () { requestAnimationFrame(reveal); }); });  // 次级:解码侧信号+双 rAF(推过布局与绘制)
+            setTimeout(reveal, 500);  // 兜底:rVFC 离屏/晚注册不触发(chromium#40239565)。注:无帧强揭=透明窗迟至 500ms 重现一次(否定重查🟡)——原生直读已 preload=auto+本地源,该路径罕见;零帧且永不揭=永久空白更糟
             var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播(策略恒过);mixer.timeupdate 会拉起 twin 对齐加入
+            if (viaFallback && !video.videoWidth) {  // 0.5.38 D1(否定重查 AMEND):兜底走默认 400×300 时,晚到 metadata 在揭示前补正几何——reveal 已推迟可见性,不可见期改几何零可见跳动,S1 与 D1 兼容(原=永久错误几何)
+                video.addEventListener("loadedmetadata", function () { if (ep !== renderEpoch || revealed) return; if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect); });
+            }
         };
-        video.addEventListener("loadedmetadata", settle);
-        setTimeout(settle, 600);  // 兜底:metadata 迟到也出画面(默认 400×300);迟到后不二次改尺寸(防跳)
+        video.addEventListener("loadedmetadata", function () { settle(false); });
+        setTimeout(function () { settle(true); }, 600);  // 兜底:metadata 迟到也出窗(默认 400×300;D1 晚到补正接管几何)
         video.addEventListener("error", function () {
             if (ep !== renderEpoch) return; settled = true;  // latch:错误后不再 settle
             var vext = (filePath.split(".").pop() || "").toLowerCase();

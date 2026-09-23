@@ -42,6 +42,7 @@ class El {
     matches(sel) { return String(sel).includes(":hover") ? !!this._hover : false; } closest() { return null; }  // 0.5.31 Y5::hover 可注入
     querySelector(sel) { return this._qs(this, sel); } querySelectorAll(sel) { return this._qsa(this, sel); }
     focus() {} select() {} load() { this._calls.push("load"); }
+    requestVideoFrameCallback(cb) { this.__rvfcCb = cb; }  // 0.5.38 终审🟡-1:rVFC 桩(真机主揭示信号的行为锚前提;终审实证注释包裹突变曾双绿存活)
     play() { this._calls.push("play"); this.paused = false; return Promise.resolve(); }
     pause() { this._calls.push("pause"); this.paused = true; return Promise.resolve(); }
     decode() { return Promise.resolve(); }
@@ -267,6 +268,42 @@ async function scenario() {
                 if (bSeek.value !== "800") fail("4c pointerup 兜底:change 丢失路径后未恢复跟随(实得 " + bSeek.value + ")");
                 bSeek.dispatch("blur", {}); bSeek.dispatch("pointercancel", {});  // 其余兜底通道不抛
                 vmDoc.activeElement = null;
+                // --- 场景4d(0.5.38 首帧白闪):opacity 揭示闸——两周期确定性锚 ---
+                // 机制:loadedmetadata(rs=1,零帧)即插入,首帧前 video 规范级完全透明→透弹窗底(用户实测起播白闪根因之一)。
+                // 修=创建即 opacity:0;揭示三信号(rVFC 主[桩无该方法,归 gate7 文本钉+复刻实验]/loadeddata+双 rAF/500ms 兜底)幂等。
+                // 周期A:悬停后 700ms(settle 经 600ms 兜底已跑,揭示兜底窗 500ms 只走了 100ms)→ 必仍 0;dispatch loadeddata→双 rAF(桩=setTimeout 0)→ 120ms 内(<500ms,排除兜底路径)必 1。
+                // 周期B:再切走再悬 → 700ms 时必 0 → +600ms(过 500ms 兜底)必 1(兜底路径)。
+                await hover(rowPng); await new Promise(r => setTimeout(r, 250));  // 切走关窗(渲染 image)
+                await hover(rowMp4); await new Promise(r => setTimeout(r, 700));
+                let vid4d = body._qs(body, "#mp-popup .mp-content video");
+                if (!vid4d) fail("4d: 新周期 video 未落(settle 未跑通)");
+                else {
+                    if (vid4d.style.opacity !== "0") fail("4d 揭示闸:settle 后揭示前 opacity 须 0(实得 " + vid4d.style.opacity + "——无帧透明窗透底=起播白闪回归)");
+                    vid4d.dispatch("loadeddata", {});
+                    await new Promise(r => setTimeout(r, 120));
+                    if (vid4d.style.opacity !== "1") fail("4d loadeddata 揭示:loadeddata+双 rAF 须置 1 且早于 500ms 兜底(实得 " + vid4d.style.opacity + ")");
+                    await hover(rowPng); await new Promise(r => setTimeout(r, 250));
+                    await hover(rowMp4); await new Promise(r => setTimeout(r, 700));
+                    vid4d = body._qs(body, "#mp-popup .mp-content video");
+                    if (!vid4d) fail("4d: 周期B video 未落");
+                    else {
+                        if (vid4d.style.opacity !== "0") fail("4d 周期B 揭示闸:兜底窗内仍须 0(实得 " + vid4d.style.opacity + ")");
+                        await new Promise(r => setTimeout(r, 600));
+                        if (vid4d.style.opacity !== "1") fail("4d 兜底揭示:rVFC 不触发(chromium#40239565 离屏坑)时 500ms 兜底须置 1(实得 " + vid4d.style.opacity + "——永久透明=永久空白弹窗)");
+                    }
+                }
+                // --- 场景4e(0.5.38 终审🟡-1):rVFC 主揭示信号行为锚(桩补 requestVideoFrameCallback;此前该钉零行为兜底=注释包裹突变实测双绿存活) ---
+                await hover(rowPng); await new Promise(r => setTimeout(r, 250));
+                await hover(rowMp4); await new Promise(r => setTimeout(r, 700));
+                let vid4e = body._qs(body, "#mp-popup .mp-content video");
+                if (!vid4e) fail("4e: video 未落");
+                else {
+                    if (vid4e.style.opacity !== "0") fail("4e 揭示闸:rVFC 回调前须 0(实得 " + vid4e.style.opacity + ")");
+                    if (!vid4e.__rvfcCb) fail("4e 注册缺失:settle 须在 play 前注册 rVFC(真机主揭示信号——注释包裹突变在此被行为杀)");
+                    vid4e.__rvfcCb({});  // 首帧提交合成器回调
+                    await new Promise(r => setTimeout(r, 30));
+                    if (vid4e.style.opacity !== "1") fail("4e rVFC 揭示:首回调须置 1(实得 " + vid4e.style.opacity + ")");
+                }
             }
         }
     }
