@@ -32,6 +32,7 @@ patch VSCode workbench.html（注入静态 `<script>` 加载 overlay IIFE）+ pr
 
 ## 事件根因文档(现行)
 
+- [起播首帧闪白-根因与修复-2026-09-23](起播首帧闪白-根因与修复-2026-09-23.md) — 0.5.38:无帧透明窗(opacity 0→首 rVFC 揭示闸)+D1/D2 附修;诚实两通路判定(暗色主题下 backdrop-filter 通路待用户验证);突变 11/11
 - [进度条拖拽冻结-根因与修复-2026-09-17](进度条拖拽冻结-根因与修复-2026-09-17.md) — 0.5.37:activeElement 焦点推断→显式 scrubbing 状态机;业界三库调研;突变矩阵 9/9;真机 CDP 端到端
 
 ## 历史归档([archive/](archive/))
