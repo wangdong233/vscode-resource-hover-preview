@@ -39,7 +39,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 审查 2.4：enabled 配置变更 → 重新 bake mp-config（需 Cmd+Q 生效，因 mp-config.js 走磁盘缓存）
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration("resource-hover-preview.enabled")) setImmediate(() => runPatcher(output));
+        if (e.affectsConfiguration("resource-hover-preview.enabled") || e.affectsConfiguration("resource-hover-preview.blurMode")) setImmediate(() => runPatcher(output));  // 0.5.39:blurMode 同通道
     }));
 
     context.subscriptions.push(
@@ -64,8 +64,9 @@ function runPatcher(output: vscode.OutputChannel) {
     }
     // 审查 2.4：读 workspace enabled 配置 → 传 patcher bake 进 mp-config（=== false 时 overlay 自禁）
     const enabled = vscode.workspace.getConfiguration("resource-hover-preview").get<boolean>("enabled", true);
+    const blurMode = vscode.workspace.getConfiguration("resource-hover-preview").get<string>("blurMode", "reduced");  // 0.5.39:玻璃三态(用户实测闪白自消融仪器)
     const child = cp.spawn(findNodeBin(), [PATCH_JS, "--patch-only"], {
-        stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", MP_ENABLED: String(enabled) },
+        stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", MP_ENABLED: String(enabled), MP_BLUR_MODE: blurMode },
     });
     const out: string[] = [], err: string[] = [];
     child.stdout?.on("data", d => out.push(d.toString()));

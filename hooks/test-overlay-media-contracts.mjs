@@ -29,6 +29,19 @@ if (!/video\.addEventListener\("loadeddata", function \(\) \{ requestAnimationFr
 if (!/setTimeout\(reveal, 500\);/.test(ov)) fail("0.5.38:500ms 揭示兜底缺失(全信号失效=永久透明弹窗)");
 if (!/if \(viaFallback && !video\.videoWidth\) \{/.test(ov) || !/video\.addEventListener\("loadedmetadata", function \(\) \{ if \(ep !== renderEpoch \|\| revealed\) return; if \(!loadPopupSize\(popup, "video"\)\) fitPopupToContent/.test(ov)) fail("0.5.38 D1:兜底默认几何后,晚到 metadata 须在揭示前补正(reveal 推迟可见性→不可见期改几何零跳动;原=永久错误几何)");
 if (!/^    var activeVideo = null;/m.test(ov) || !/^        activeVideo = video;/m.test(ov) || !/^            if \(activeVideo\) \{ try \{ activeVideo\.pause\(\); activeVideo\.removeAttribute\("src"\); activeVideo\.load\(\); \} catch \(eV\) \{\} activeVideo = null; \}/m.test(ov)) fail("0.5.38 D2:离屏未 settle master video 须模块引用切断(镜像 activeTwin;原只清 twin 漏本体=/preview 孤儿拉取;行锚——注释包裹可绕过子串锚,突变 M9 实证)");
+// ===== 0.5.39 🔴起播闪白第二轮(用户实测 0.5.38 后仍闪;本地三路复刻全净→用户环境合成器级;否定重查裁决:砍 B/isolation,修锚 C) =====
+const blurLines = ov.split("\n").filter(l => /backdrop-filter:blur/.test(l) && !/@supports/.test(l));
+if (blurLines.length !== 1 || (blurLines[0].match(/backdrop-filter:blur/g) || []).length !== 2) fail("0.5.39:backdrop-filter:blur 须恰存于 #mp-popup 主玻璃一行(标准+webkit 各 1;fname/rail/mb 三子表面已去 blur——嵌套 filter 强制独立渲染面=闪源削减;@supports 特性查询字面量不计)");
+if (!/background:rgba\(28,28,32,\.82\)/.test(ov) || !/background:rgba\(28,28,32,\.85\)/.test(ov) || !/background:rgba\(15,15,18,\.85\)/.test(ov)) fail("0.5.39:子表面去 blur 后须提不透明度补偿视觉(fname .82/rail .85/mb .85)");
+if (!/#mp-popup\.mp-noblur\{backdrop-filter:none;-webkit-backdrop-filter:none;background:var\(--vscode-editorWidget-background,#252526\)\}/.test(ov)) fail("0.5.39:mp-noblur 规则缺失或背景须主题变量派生(off 模式与起播窗共用的二值 blur 切换;blur 禁插值=新闪源;硬编码色在浅色主题=暗块——终审🟡-1)");
+if (!/setTimeout\(function \(\) \{ var p2 = document\.getElementById\("mp-popup"\); if \(p2\) p2\.classList\.remove\("mp-noblur"\); \}, 480\);/.test(ov)) fail("0.5.39 终审🔴-1:摘类 timer 不得带 ep 守卫(480ms 窗内早退→hidePopup 换代→拒摘+重布防跳过=会话级永久滞留)");
+if (!/if \(BLUR_MODE !== "off"\) popup\.classList\.remove\("mp-noblur"\);/.test(ov)) fail("0.5.39 终审🔴-1:hidePopup 须即清起播窗残留类(off 模式=永久类禁摘;关闭漏斗双保险)");
+if (!/#mp-popup\{transition:background-color 300ms ease-out\}/.test(ov)) fail("0.5.39:玻璃渐回只许 transition background-color(否定重查:blur 插值在老 GPU=新闪源)");
+if (!/var BLUR_MODE = \(cfg\.blurMode === "off" \|\| cfg\.blurMode === "full"\) \? cfg\.blurMode : "reduced";/.test(ov)) fail("0.5.39:BLUR_MODE 三态引导缺失(reduced 默认/off 主 blur 永久关/full 禁起播窗)");
+if (!/if \(BLUR_MODE === "off"\) popup\.classList\.add\("mp-noblur"\);/.test(ov)) fail("0.5.39:off 模式须建 popup 即挂 mp-noblur(用户单轮自消融目验)");
+if (!/var nbPlay = false, nbFrame = false, nbArmed = false;/.test(ov) || !/if \(nbArmed \|\| ep !== renderEpoch \|\| !\(nbPlay && nbFrame\)\) return;/.test(ov)) fail("0.5.39 起播窗:playing+首 rVFC 双确认缺失(单确认在 reveal 于 paused t=0 触发时=保护空拍,否定重查修锚)");
+if (!/\}, 480\);/.test(ov)) fail("0.5.39 起播窗:480ms 窗长缺失(24fps 头3-5帧+rail snap 220ms 重光栅化 tail)");
+if (!/if \(BLUR_MODE === "reduced"\) \{/.test(ov)) fail("0.5.39:起播窗须 gated on reduced(full 模式禁用)");
 if (!/var settled = false;/.test(ov) || !/settled = true;/.test(ov)) fail("settle latch 缺失(settle-before-show 单次入口契约)");
 if (!/content\.replaceChildren\.apply\(content, kids\);/.test(ov) || !/buildMediaBar\(mixer\)/.test(ov)) fail("video+twin+bar 须同刻插入(kids 数组,bar 绑 mixer;S1)");
 if (!/content\.replaceChildren\(audio, buildMediaBar\(audio\)\);/.test(ov)) fail("audio 须同款 mp-mb(同一组件双消费,原生控件同族死按钮风险)");

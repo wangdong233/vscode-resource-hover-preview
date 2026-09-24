@@ -1,7 +1,7 @@
 {
   "name": "vscode-resource-hover-preview-companion",
   "displayName": "Resource Hover Preview",
-  "version": "0.5.38",
+  "version": "0.5.39",
   "publisher": "wangdong",
   "repository": {
     "type": "git",
@@ -42,6 +42,16 @@
           "type": "boolean",
           "default": true,
           "description": "启动后后台预提取 AAC 家族音轨到本地缓存(消除视频预览首次 ~1.4s;nice 低优先级串行,80 文件/8 分钟预算)"
+        },
+        "resource-hover-preview.blurMode": {
+          "type": "string",
+          "enum": [
+            "reduced",
+            "off",
+            "full"
+          ],
+          "default": "reduced",
+          "description": "玻璃效果模式(0.5.39 起播闪白第二轮):reduced=默认(子控件无毛玻璃+视频起播 480ms 内主玻璃暂关);off=主玻璃永久关(自测闪白是否来自毛玻璃合成);full=毛玻璃全时(禁起播窗)。需 Cmd+Q 重启生效。"
         }
       }
     }

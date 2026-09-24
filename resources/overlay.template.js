@@ -10,6 +10,7 @@
     if (cfg.enabled === false) { console.log("[mp-overlay] disabled（resource-hover-preview.enabled=false）"); return; }  // 运行时开关(2.4)：=== false 避免未定义误关
     var SERVER_BASE = "http://127.0.0.1:" + cfg.port;
     var TOKEN = cfg.token;
+    var BLUR_MODE = (cfg.blurMode === "off" || cfg.blurMode === "full") ? cfg.blurMode : "reduced";  // 0.5.39:玻璃模式三态(off=主 blur 永久关;full=禁起播窗;reduced=默认:子表面无 blur+起播窗 no-blur)——用户实测闪白第二轮否定重查裁决:本地三路复刻全净(真 GPU Chrome/真渲染器注入/解码帧采样),闪=用户环境合成器级,blurMode 给用户单轮自消融主 blur 的仪器
     var HOVER_DELAY = 300, HIDE_DELAY = 200;  // 0.5.34:统一 200(0.5.20 媒体 400ms 是前走廊时代防"移向控件条击穿"的补丁,走廊(连接带+移动中判定)已覆盖该场景;用户裁决灵敏度回归)
     function hideDelayMs() { return HIDE_DELAY; }
     var isPinned = false;
@@ -237,6 +238,7 @@
         if (popup) return popup;
         popup = document.createElement("div");
         popup.id = "mp-popup";
+        if (BLUR_MODE === "off") popup.classList.add("mp-noblur");  // 0.5.39:off 模式=主 blur 永久关(blurMode 设置;用户单轮自消融目验)
         var fname = document.createElement("span"); fname.className = "mp-fname"; fname.title = "点击重命名";  // 文件名悬浮左上（0.4.9 毛玻璃胶囊 + 点击改名）
         fname.addEventListener("click", startRename);
         // 工具盘（右下角右侧边外部吸附；pin/reset/close SVG 图标 + divider 分组；popup DOM 子元素保 :hover/mouseleave 协同）
@@ -274,10 +276,13 @@
             // Wave2 样式重构：无 border + 半透明毛玻璃 + overflow:visible（让 rail 溢出右侧可点）
             "#mp-popup{position:fixed;z-index:999999;background:color-mix(in srgb,var(--vscode-editorWidget-background,#252526) 72%,transparent);backdrop-filter:blur(12px) saturate(1.3);-webkit-backdrop-filter:blur(12px) saturate(1.3);border:none;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:visible;display:flex;flex-direction:column;min-width:200px;min-height:150px;width:400px;height:300px}",
             "@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){#mp-popup{background:var(--vscode-editorWidget-background,#252526)}}",  // 软件渲染兜底（无 backdrop-filter）
+            // 0.5.39 🔴起播闪白第二轮(off 模式与起播窗):blur 面重光栅化在老 GPU 上有白闪家族 bug(chromium 41471914/瓦片不连续;VSCode 自家 PR#293865 对 quick chat 弃 blur)。起播窗内 blur 二值切换(禁插值——blur 过渡=每帧全窗重采样=新闪源),只渐变 background-color
+            "#mp-popup.mp-noblur{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--vscode-editorWidget-background,#252526)}",  // 0.5.39 终审🟡-1:主题变量派生(原硬编码 rgba(40,44,52,.96) 在浅色主题=暗块闪;与 @supports 软渲染兜底同款终态)
+            "#mp-popup{transition:background-color 300ms ease-out}",
             ".mp-content{flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;border-radius:8px}",  // ★ clip 下推到 content（popup overflow:visible 让 rail/handle 溢出）
             ".mp-content img,.mp-content video,.mp-content canvas{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}",
-            ".mp-fname{position:absolute;top:-24px;left:0;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.55);backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
-            ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.62);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
+            ".mp-fname{position:absolute;top:-24px;left:0;z-index:2;font:500 11px/1.4 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.92);padding:3px 8px;border-radius:4px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(28,28,32,.82);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 8px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);text-shadow:0 1px 2px rgba(0,0,0,.6);cursor:text}",  // 0.4.11 文件名常驻可见（原 opacity:0 hover 才显 → 用户看不到）；吸附左上角横边（top:6 left:6 毛玻璃胶囊）
+            ".mp-rail{position:absolute;top:6px;right:0;transform:translate(112%,0) scale(.92);pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px;border-radius:9px;background:rgba(28,28,32,.85);border:1px solid rgba(255,255,255,.1);box-shadow:0 6px 20px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.07);opacity:0;transition:opacity 120ms ease-out,transform 120ms ease-out}",  // 0.4.12 右上角右侧边外部吸附（用户修正：右上非右下；与左上文件名对称）
             "#mp-popup:hover .mp-rail{pointer-events:auto;opacity:1;transform:translate(100%,0) scale(1);transition:opacity 180ms cubic-bezier(.22,1,.36,1),transform 220ms cubic-bezier(.34,1.56,.64,1)}",  // snap spring 入场
             "#mp-popup.rail-left .mp-rail{top:6px;right:auto;left:0;transform:translate(-12%,0) scale(.92)}",
             "#mp-popup.rail-left:hover .mp-rail{transform:translate(-100%,0) scale(1)}",
@@ -303,7 +308,7 @@
             "#mp-popup.is-pinned .mp-content video,#mp-popup.is-pinned .mp-content audio{cursor:default}",  // 视频/音频画面区非按钮处常规光标(交互面=mp-mb,0.5.27 起 controls 已弃)
             "#mp-popup.is-dragging,#mp-popup.is-dragging *{cursor:grabbing!important}",  // 拖动中统一锁定(模态捕获态,!important 唯一合法用)
             // 0.5.27 自研媒体控件条(替代原生 UA controls:闭影 DOM 在 VSCode 环境交互死 + 自动化不可测)
-            ".mp-mb{position:absolute;left:10px;right:10px;bottom:8px;z-index:2;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:rgba(15,15,18,.62);backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3);box-shadow:0 2px 10px rgba(0,0,0,.4)}",  // 0.5.27b:内缩悬浮胶囊(白盒审计:四角把手 14×14 opacity:0 恒命中,贴边条会吃 play 键左缘——离边 10px 避让四角把手;仅角部 4×6px 残余重叠,handle z-3 恒胜,不挡 play 键本体)
+            ".mp-mb{position:absolute;left:10px;right:10px;bottom:8px;z-index:2;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:rgba(15,15,18,.85);box-shadow:0 2px 10px rgba(0,0,0,.4)}",  // 0.5.27b:内缩悬浮胶囊(白盒审计:四角把手 14×14 opacity:0 恒命中,贴边条会吃 play 键左缘——离边 10px 避让四角把手;仅角部 4×6px 残余重叠,handle z-3 恒胜,不挡 play 键本体)
             ".mp-mb button{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:rgba(255,255,255,.9);cursor:pointer;padding:0;border-radius:6px;transition:background-color 100ms ease-out,color 100ms ease-out}",
             ".mp-mb button:hover{background:rgba(255,255,255,.14);color:#fff}",
             ".mp-mb-time{flex:none;font:500 11px/1 var(--vscode-font-family,sans-serif);color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums;white-space:nowrap}",
@@ -542,6 +547,7 @@
         zoomGeomGrace = 0; zoomGeomHold = false;  // 0.5.31 Y3:关闭即复位(grace 到期回调对已关弹窗 hidePopup 幂等,但状态须同刻归零)
         renderEpoch++;  // 0.5.12🟡修:bump 代际→in-flight render3DFull 的 ep 守卫作废,防 popup 已隐藏但其 rAF 动画循环继续空转耗 GPU(3D 资源隐性泄漏)
         var popup = document.getElementById("mp-popup"); if (!popup) return;
+        if (BLUR_MODE !== "off") popup.classList.remove("mp-noblur");  // 0.5.39 终审🔴-1 双保险:关闭漏斗即清起播窗残留类(off 模式=永久类禁摘);单靠 timer 摘类曾会话级死锁
         disposeContent(); popup.style.display = "none"; popup.style.width = ""; popup.style.height = ""; popup.style.minHeight = "";  // 0.5.20(A6)+0.5.21🔵-1:含 minHeight(audio 56 残留陷阱):清残留几何,下次 placePopup 不用上一项旧尺寸定位
         var content = popup.querySelector(".mp-content"); if (content) content.replaceChildren();
         lastRenderedItem = null;  // 清已渲染项（审查 3.1）
@@ -833,6 +839,22 @@
             video.addEventListener("loadeddata", function () { requestAnimationFrame(function () { requestAnimationFrame(reveal); }); });  // 次级:解码侧信号+双 rAF(推过布局与绘制)
             setTimeout(reveal, 500);  // 兜底:rVFC 离屏/晚注册不触发(chromium#40239565)。注:无帧强揭=透明窗迟至 500ms 重现一次(否定重查🟡)——原生直读已 preload=auto+本地源,该路径罕见;零帧且永不揭=永久空白更糟
             var pp = video.play(); if (pp && pp.catch) pp.catch(function () {});  // muted 起播(策略恒过);mixer.timeupdate 会拉起 twin 对齐加入
+            // 0.5.39 起播窗 no-blur(否定重查修锚版):锚=playing+首 rVFC 双确认(单确认会在 reveal 于 paused t=0 触发时把 480ms 窗打在起播前=保护空拍);
+            // 窗 480ms(24fps 头3-5帧 125-208ms+入场 rail snap 220ms 重光栅化 tail;按合成器稳态定长)。blur 二值切换,只渐变 background-color(blur 插值=每帧全窗重采样=新闪源)
+            if (BLUR_MODE === "reduced") {
+                var nbPlay = false, nbFrame = false, nbArmed = false;
+                var nbTry = function () {
+                    if (nbArmed || ep !== renderEpoch || !(nbPlay && nbFrame)) return;
+                    nbArmed = true;
+                    var nbPop = document.getElementById("mp-popup");
+                    if (nbPop && !nbPop.classList.contains("mp-noblur")) {
+                        nbPop.classList.add("mp-noblur");
+                        setTimeout(function () { var p2 = document.getElementById("mp-popup"); if (p2) p2.classList.remove("mp-noblur"); }, 480);  // 0.5.39 终审🔴-1:摘类不带 ep 守卫——换代(hidePopup bump epoch)后拒摘+重布防见类在场即跳过=会话级永久滞留(殃及全渲染类型);对已隐藏 popup 摘类恒无害
+                    }
+                };
+                video.addEventListener("playing", function () { nbPlay = true; nbTry(); });
+                if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(function () { nbFrame = true; nbTry(); });
+            }
             if (viaFallback && !video.videoWidth) {  // 0.5.38 D1(否定重查 AMEND):兜底走默认 400×300 时,晚到 metadata 在揭示前补正几何——reveal 已推迟可见性,不可见期改几何零可见跳动,S1 与 D1 兼容(原=永久错误几何)
                 video.addEventListener("loadedmetadata", function () { if (ep !== renderEpoch || revealed) return; if (!loadPopupSize(popup, "video")) fitPopupToContent(video.videoWidth, video.videoHeight, rect); });
             }

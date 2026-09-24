@@ -42,7 +42,7 @@ class El {
     matches(sel) { return String(sel).includes(":hover") ? !!this._hover : false; } closest() { return null; }  // 0.5.31 Y5::hover 可注入
     querySelector(sel) { return this._qs(this, sel); } querySelectorAll(sel) { return this._qsa(this, sel); }
     focus() {} select() {} load() { this._calls.push("load"); }
-    requestVideoFrameCallback(cb) { this.__rvfcCb = cb; }  // 0.5.38 终审🟡-1:rVFC 桩(真机主揭示信号的行为锚前提;终审实证注释包裹突变曾双绿存活)
+    requestVideoFrameCallback(cb) { (this.__rvfcCbs = this.__rvfcCbs || []).push(cb); this.__rvfcCb = cb; }  // 0.5.38 终审🟡-1:rVFC 桩(真机主揭示信号的行为锚前提);0.5.39:队列化——reveal 与 noblur 双注册,单槽覆盖会吞 4e(真浏览器允许多并发回调)
     play() { this._calls.push("play"); this.paused = false; return Promise.resolve(); }
     pause() { this._calls.push("pause"); this.paused = true; return Promise.resolve(); }
     decode() { return Promise.resolve(); }
@@ -299,10 +299,53 @@ async function scenario() {
                 if (!vid4e) fail("4e: video 未落");
                 else {
                     if (vid4e.style.opacity !== "0") fail("4e 揭示闸:rVFC 回调前须 0(实得 " + vid4e.style.opacity + ")");
-                    if (!vid4e.__rvfcCb) fail("4e 注册缺失:settle 须在 play 前注册 rVFC(真机主揭示信号——注释包裹突变在此被行为杀)");
-                    vid4e.__rvfcCb({});  // 首帧提交合成器回调
+                    if (!vid4e.__rvfcCbs || !vid4e.__rvfcCbs.length) fail("4e 注册缺失:settle 须在 play 前注册 rVFC(真机主揭示信号——注释包裹突变在此被行为杀)");
+                    vid4e.__rvfcCbs.slice().forEach(function (cb) { cb({}); });  // 首帧回调(队列全发——reveal+noblur 双注册)
                     await new Promise(r => setTimeout(r, 30));
                     if (vid4e.style.opacity !== "1") fail("4e rVFC 揭示:首回调须置 1(实得 " + vid4e.style.opacity + ")");
+                }
+                // --- 场景4f(0.5.39 起播窗 no-blur):playing+首 rVFC 双确认挂 .mp-noblur,480ms 后摘 ---
+                // 否定重查修锚:单确认(reveal 可在 paused t=0 触发)会把窗打在起播前=保护空拍;须干净新周期测。
+                await hover(rowPng); await new Promise(r => setTimeout(r, 250));
+                await hover(rowMp4); await new Promise(r => setTimeout(r, 700));
+                {
+                    const pop4f = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+                    const vid4f = body._qs(body, "#mp-popup .mp-content video");
+                    if (!pop4f || !vid4f) fail("4f: popup/video 缺");
+                    else {
+                        if (!vid4f.__rvfcCbs || vid4f.__rvfcCbs.length < 2) fail("4f 双注册:settle 须注册 reveal+noblur 两个 rVFC 回调(实得 " + (vid4f.__rvfcCbs || []).length + ")");
+                        vid4f.dispatch("playing", {});   // 先 playing(单确认)
+                        if (pop4f._cls.has("mp-noblur")) fail("4f 单确认防护:仅 playing 不得挂 no-blur(窗会打在起播前=保护空拍)");
+                        vid4f.__rvfcCbs.slice().forEach(function (cb) { cb({}); });  // 再首 rVFC → 双确认
+                        if (!pop4f._cls.has("mp-noblur")) fail("4f 双确认挂窗:playing+首 rVFC 后须挂 .mp-noblur(起播合成风暴窗玻璃暂关)");
+                        await new Promise(r => setTimeout(r, 560));  // 过 480ms 窗
+                        if (pop4f._cls.has("mp-noblur")) fail("4f 摘窗:480ms 后须摘 .mp-noblur(玻璃经 background-color 300ms 渐回)");
+                    }
+                }
+                // --- 场景4g(0.5.39 终审🔴-1 死锁逃逸口):480ms 窗内早退(hidePopup 换代)→类不得会话级滞留 ---
+                await hover(rowPng); await new Promise(r => setTimeout(r, 250));
+                await hover(rowMp4); await new Promise(r => setTimeout(r, 700));
+                {
+                    const pop4g = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+                    const vid4g = body._qs(body, "#mp-popup .mp-content video");
+                    if (!pop4g || !vid4g) fail("4g: popup/video 缺");
+                    else {
+                        vid4g.dispatch("playing", {});
+                        (vid4g.__rvfcCbs || []).slice().forEach(function (cb) { cb({}); });
+                        if (!pop4g._cls.has("mp-noblur")) fail("4g 前置:双确认后须挂类");
+                        const close4g = pop4g._qsa(pop4g, "button").find(b => b.className.includes("mp-close"));
+                        if (!close4g) fail("4g: close 按钮缺");
+                        else {
+                            close4g.dispatch("click", { stopPropagation() {} });   // 480ms 窗内关闭(hidePopup+epoch 换代)
+                            if (pop4g.style.display !== "none") fail("4g 前置:closeBtn 未隐藏 popup");
+                            if (pop4g._cls.has("mp-noblur")) fail("4g 🔴死锁:hidePopup 须即清 mp-noblur(关闭漏斗双保险;off 模式除外)");
+                            await new Promise(r => setTimeout(r, 600));  // 过 480ms timer(终审:原 ep 守卫在换代后拒摘=滞留)
+                            if (pop4g._cls.has("mp-noblur")) fail("4g 🔴死锁:摘类 timer 不得带 ep 守卫(换代拒摘+重布防见类跳过=会话级永久滞留,殃及图片/音频全类型)");
+                            await hover(rowPng); await new Promise(r => setTimeout(r, 450));  // 再悬图片:后续渲染不得被污染
+                            const pop4g2 = byId.get("mp-popup") || body._qs(body, "#mp-popup");
+                            if (pop4g2 && pop4g2._cls.has("mp-noblur")) fail("4g:再悬停后类残留(后续渲染被污染)");
+                        }
+                    }
                 }
             }
         }

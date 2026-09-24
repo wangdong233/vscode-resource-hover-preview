@@ -9,6 +9,7 @@ export interface OverlayConfig {
     token: string;
     version: string;
     enabled?: boolean;  // 运行时开关（审查 2.4）：=== false 时 overlay IIFE 直接 return
+    blurMode?: string;  // 0.5.39 玻璃三态:"reduced"(默认,缺省即此)|"off"(主 blur 永久关)|"full"(禁起播窗)
 }
 
 // bake mp-overlay.js：banner 替换（version + content-hash），不碰 __MP_CONFIG__（运行时由 mp-config.js 注入）。
@@ -29,5 +30,6 @@ export function buildOverlayJs(templateJs: string, version: string): { js: strin
 export function buildConfigJs(config: OverlayConfig): string {
     const safe = { ...config };
     if (safe.enabled === undefined) delete safe.enabled;
+    if (safe.blurMode === undefined) delete safe.blurMode;  // 0.5.39:undefined 删(老 mp-config 无此字段 → overlay 视为 reduced 默认)
     return `/*mp-config:baked*/\nwindow.__MP_CONFIG__ = ${JSON.stringify(safe)};\n`;
 }

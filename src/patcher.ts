@@ -116,7 +116,7 @@ async function detectAndPatch(install: Install, fixedToken: string): Promise<"fr
         //   → mp-config(workbench 读) vs server(activate 新 token) 永久不匹配 → fetch 永远 403。
         if (fixedToken) {
             writeAtomicSync(path.join(path.dirname(workbenchHtmlPath), "mp-config.js"),
-                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false" }));
+                buildConfigJs({ port: 17741, token: fixedToken, version: INJECT_VERSION, enabled: process.env.MP_ENABLED !== "false", blurMode: (process.env.MP_BLUR_MODE === "off" || process.env.MP_BLUR_MODE === "full") ? process.env.MP_BLUR_MODE : undefined }));  // 0.5.39:blurMode 仅 off/full 显式写入(缺省=reduced)
         }
         // 0.5.11: main.js autoplay 残留清理（0.5.10 废弃特性的迁移 strip,幂等）
         try { stripMainAutoplay(mainJsPath); } catch (e) { console.warn(`[mp] main.js strip skipped: ${(e as Error).message}`); }
